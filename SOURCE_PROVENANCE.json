@@ -1,7 +1,7 @@
 {
   "snapshot_date": "2026-10-19",
   "sdk_upstream": "https://github.com/TGP482/XboxXBE-Recomp",
-  "sdk_upstream_commit": "40e9c35",
+  "sdk_upstream_commit": "40e9c35451305f09ca9d86f677e4b9c2c37ff26b",
   "sdk_snapshot": "working Linux/Vulkan SDK plus generic SD-document/controller fixes",
   "splashdown_overlay": "overlays/splashdown-sdk.patch",
   "ports": {

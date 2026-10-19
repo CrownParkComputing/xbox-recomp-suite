@@ -61,6 +61,8 @@ python3 tools/build_android.py Splashdown --jobs 4
 python3 tools/build_android.py BLACK --jobs 4
 ```
 
+Packaging uses CMake and the Android SDK directly; Gradle is not required.
+
 The first command builds SDL/glslang/SPIRV dependencies in
 `.local/android-dependencies`. Native per-port builds and packaging live under
 `.local/android/<title>`, and completed APKs are copied to ignored `dist/`.

@@ -1,5 +1,9 @@
 # Isolated SDK changes
 
+This is the historical seven-patch series from the original working checkout.
+In the source suite, use `tools/prepare.py`; its single overlay already includes
+these changes. See [the current build guide](../../../docs/BUILDING.md).
+
 `sdk` links to `.local/sdk`; the shared `/home/jon/XboxXBE-Recomp` checkout is
 unchanged. To reproduce this port from that baseline, apply these patches in order:
 

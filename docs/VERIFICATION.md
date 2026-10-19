@@ -42,9 +42,12 @@ orientation. PGR1, Links, NFS and Burnout show intro playback from their SD
 folders; Burnout also gets past loading. Full gameplay/performance of those
 sibling ports was not established by these boot checks.
 
-Latest user observation: Career's first Splashdown race appeared solo even
-after skipping qualifying. Missing Career opponents are an open issue; creation
-versus rendering is not yet isolated. Do not claim Career fully verified.
+The user reported a solo first Career race after skipping qualifying. A native
+reproduction of Normal / Andy / Maui with the explicit **X: Skip**, then
+**A: Start Race** sequence shows fifth place, a HUD labelled **Race**, and visible
+AI opponents. The qualifying session has a HUD labelled **Qualify** and is solo.
+The handheld report still needs its HUD/mode confirmed; no AI code change was
+made and Career is not marked fully verified.
 
 Game screenshots, sound captures, file manifests and local retail-derived build
 products are kept in the original private verification workspace and are not

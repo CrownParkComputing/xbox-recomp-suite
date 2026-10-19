@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$(realpath "$0")")"
-adb_cmd=("${ADB:-adb}")
-[[ -z "${SERIAL:-}" ]] || adb_cmd+=(-s "$SERIAL")
-apk=build/Splashdown-arm64-debug.apk
-[[ -f "$apk" ]] || { echo "Run android/build.sh first" >&2; exit 1; }
-"${adb_cmd[@]}" install -r "$apk"
-"${adb_cmd[@]}" shell am start -n com.splashdown.recomp/.LauncherActivity
-"${adb_cmd[@]}" logcat -v time Splashdown:V SDL:V AndroidRuntime:E libc:F '*:S'
+cd "$(dirname "$(realpath "$0")")/.."
+title="${1:-Splashdown}"
+case "$title" in
+    Splashdown) slug=splashdown;;
+    Burnout3) slug=burnout3;;
+    Links2004) slug=links2004;;
+    NFSHP2) slug=nfshp2;;
+    BLACK) slug=black;;
+    PGR1) slug=pgr1;;
+    *) echo "Unknown title: $title" >&2; exit 2;;
+esac
+adb_command=(adb)
+[[ -z "${SERIAL:-}" ]] || adb_command+=(-s "$SERIAL")
+"${adb_command[@]}" install -r "dist/$title-arm64-debug.apk"
+"${adb_command[@]}" shell am start -n "com.$slug.recomp/.LauncherActivity"
