@@ -12,20 +12,22 @@ PORTS = {"Splashdown": ("Splashdown", "splashdown", "Splashdown"),
          "Links2004": ("Links 2004", "links2004", "Links2004"),
          "NFSHP2": ("NFS Hot Pursuit 2", "nfshp2", "NFSHP2"),
          "BLACK": ("BLACK", "black", "Black"),
-         "PGR1": ("Project Gotham Racing", "pgr1", "PGR1")}
+         "PGR1": ("Project Gotham Racing", "pgr1", "PGR1"),
+         "LARush": ("L.A. Rush", "larush", "LARush")}
 
 
 def sdk_for(title):
     sdk = ROOT / "sdk"
-    if title != "Splashdown":
+    if title not in {"Splashdown", "LARush"}:
         return sdk
-    overlay = ROOT / "overlays/splashdown-sdk.patch"
+    slug = title.lower()
+    overlay = ROOT / "overlays" / (slug + "-sdk.patch")
     digest = hashlib.sha256(overlay.read_bytes())
     for path in sorted(sdk.rglob("*")):
         if path.is_file():
             digest.update(str(path.relative_to(sdk)).encode())
             digest.update(path.read_bytes())
-    destination = ROOT / ".local/sdks" / ("splashdown-" + digest.hexdigest()[:16])
+    destination = ROOT / ".local/sdks" / (slug + "-" + digest.hexdigest()[:16])
     if not (destination / ".prepared").exists():
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_name(destination.name + ".tmp")

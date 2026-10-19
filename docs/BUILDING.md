@@ -97,3 +97,13 @@ python3 tools/audit_source.py
 The audit checks the actual Git index for private inputs and secrets, verifies
 vendored dependency hashes, and reports file count/size. Private build inputs,
 SDK overlays, build products, saves and signing keys are ignored.
+
+
+### L.A. Rush
+
+Use `LARush` with the same preparation and build commands. Its SDK changes are
+isolated in `overlays/larush-sdk.patch`; preparation checks and applies that patch
+to a private SDK copy. The retail executable used for validation has SHA-256
+`ffb5ac9c63592c571c31a05311dae137c72126f8f5836cfabdfc798185bfb4bd`.
+Diagnostic checks are described in ports/LARush/README.md. The desktop build
+reaches driving; Android compilation is verified and device testing is pending.

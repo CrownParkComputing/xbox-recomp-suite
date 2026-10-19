@@ -1,6 +1,6 @@
 # Xbox Recomp Suite
 
-Source snapshots for six original Xbox native ports, their Linux/Vulkan and
+Source snapshots for seven original Xbox native ports, their Linux/Vulkan and
 Android tooling, the shared Xbox XBE Recomp runtime, and the porting cookbook.
 SDL and the other source dependencies are vendored with their upstream licenses
 and exact revisions in [`DEPENDENCIES.lock.json`](DEPENDENCIES.lock.json).
@@ -18,16 +18,19 @@ is not evidence of complete gameplay support.
 | NFS Hot Pursuit 2 | SD folder boot; intro plays | Pause/standings text alignment remains open |
 | PGR1 | SD folder boot; intro plays | Full race graphics/performance not validated here |
 | BLACK | SD folder boot; intro and title screen | Full gameplay/performance not validated here |
+| L.A. Rush | Android arm64 APK builds; desktop Story driving verified | Collision mesh fix verified on desktop; Android device test pending |
 
-All six Android builds remember the selected SD ISO/folder, skip the picker while
-it remains accessible, and end the native game process on minimize/close.
-SFRush is intentionally excluded.
+The shared Android launcher remembers the selected SD ISO/folder, skips the
+picker while it remains accessible, and ends the native game process on
+minimize/close. These behaviors were device-tested on the original six titles;
+L.A. Rush uses the same launcher and awaits device validation. Its former local
+folder name, SFRush-XBERecomp, was misleading: its game is L.A. Rush.
 
 ## Layout
 
 - `sdk/`: the shared runtime, recompiler, XDK layouts, tests, and templates.
 - `ports/<title>/`: per-game configuration, native hooks, and original notes.
-- `overlays/splashdown-sdk.patch`: Splashdown's isolated tested SDK changes.
+- `overlays/`: isolated SDK changes for Splashdown and L.A. Rush.
 - `android/`: shared SDL Java, launcher, document-tree JNI, shader adapter, and APK packaging.
 - `third_party/`: pinned SDL, glslang, SPIRV-Tools/Headers, ImGui, toml++, VMA, Zydis and Zycore sources.
 - `tools/`: portable SDK preparation, Linux/Android builds, and source audit.
@@ -47,7 +50,7 @@ python3 tools/build_android.py Splashdown --jobs 4
 ```
 
 The APK appears in `dist/Splashdown-arm64-debug.apk`. To build another title,
-replace `Splashdown` with `Burnout3`, `Links2004`, `NFSHP2`, `PGR1`, or `BLACK`.
+replace `Splashdown` with `Burnout3`, `Links2004`, `NFSHP2`, `PGR1`, `BLACK`, or `LARush`.
 For a native desktop executable, omit `--generate-only` from the Linux command.
 Install the prerequisites in [the build guide](docs/BUILDING.md) first.
 

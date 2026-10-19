@@ -52,3 +52,17 @@ made and Career is not marked fully verified.
 Game screenshots, sound captures, file manifests and local retail-derived build
 products are kept in the original private verification workspace and are not
 included in this public source import.
+
+
+## L.A. Rush addition
+
+The seventh source port has a compiled Android arm64 APK; it has not been
+installed or device-tested. No ADB device was connected during this work.
+Desktop Vulkan validation used the real retail guest code on Lavapipe, with
+intro video/audio, profiles, Story cutscenes, Beverly Hills driving, acceleration,
+reverse, steering, pause and map. Vehicle meshes remain visible after two impacts
+following the SetVertexShaderInputDirect bridge. Five integration programs pass
+202 checks: 66 file I/O, 12 clock, 76 input, 32 PCM mixer/voice routing, and 16
+custom vertex input/byte offset/reference lifetime checks. APK signature and
+16 KiB ZIP alignment checks pass. Full races, mission completion and handheld
+performance remain unvalidated. See ports/LARush/PORT_STATUS.md.

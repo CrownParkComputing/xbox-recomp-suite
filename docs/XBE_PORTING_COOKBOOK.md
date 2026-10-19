@@ -90,7 +90,7 @@ Use precise states such as **builds**, **boots**, **presents**, **renders menu**
 
 ## Source-suite recipe and Android lessons (2026-10-19)
 
-This checkout is one source repository containing six ports, the tested shared
+This checkout is one source repository containing seven ports, the tested shared
 SDK, Splashdown's explicit overlay, common SDL/Android integration, and pinned
 third-party source trees. Use `tools/prepare.py` and the commands in
 [BUILDING.md](BUILDING.md). Their paths are relative to the checkout; they do not
@@ -171,3 +171,46 @@ first needs its mode identified: qualifying and an actual opponent race are
 different evidence. Confirm the main-race route before changing AI creation or
 visibility. Record the latest unresolved user observation instead of marking an
 entire mode playable from a title-screen capture.
+
+
+### L.A. Rush: overlapped reads and XACT initialization
+
+Follow the engine's completion path when a resource inflater fails. L.A. Rush
+pipelines eight DVD reads; returning synchronous success skipped its byte-count
+collection and produced an underflowed compressed input length. Preserve each
+request's IO_STATUS_BLOCK, event and offset, and return STATUS_PENDING for
+asynchronous handles even when the host completed their work immediately.
+Synchronous handles still return success. Compare decompressed resources with an
+independent decoder, and exercise multiple outstanding reads in an integration
+test.
+
+A success stub for XACT engine initialization hid the next set of faults and
+created null sound-bank pointers. Restore initialization before adding null
+checks. Its public DirectSound calls need host bridges for stream creation,
+SetPitch, Use3DVoiceData, Set3DVoiceData, GetVoiceProperties and mix-in routing.
+GetVoiceProperties writes a 0x5C-byte structure; it is not the 0x38-byte calculated
+3D data structure. Keep XACT's light-HRTF math callback initialization even when
+hardware DSP processing is replaced by a host mixer.
+
+The APU reference clock uses 48 kHz samples and 100 ns time units. Preserve
+callee-saved registers and test counter wrap; a clock stub that clobbers EBX can
+look like an input/menu bug. Compare individual host controller fields rather
+than padding bytes when deciding whether an XInput packet changed.
+
+
+### L.A. Rush: damaged vehicle streams and merged tails
+
+After impact, the body disappeared while its driver and HUD remained. Frame
+traces showed FLOAT3 vehicle shaders receiving zero vertex-buffer bindings.
+The game uses SetVertexShaderInputDirect for deformed meshes rather than normal
+SetStreamSource bindings. Preserve its sixteen input descriptors, per-stream
+buffer/stride/byte offset, and buffer references. Restore ordinary bindings when
+the declaration is null, and carry stream byte offsets through both raw and
+converted vertex assembly and the render thread snapshot.
+
+Hook the callable entry: in this executable 0x251EE0 copies the direct declaration
+and jumps to 0x252470. The recompiler merges that tail into the entry's generated
+function; a separate override named for the interior target will not run. Check
+the generated function mapping and actual call sites before choosing a hook.
+Verify an impact after implementing the bridge; a stationary intact car exercises
+a different vertex path.

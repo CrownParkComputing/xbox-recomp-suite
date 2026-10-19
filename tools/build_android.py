@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build any of the six Android ports from the source suite."""
+"""Build any of the seven Android ports from the source suite."""
 import argparse
 import os
 from pathlib import Path

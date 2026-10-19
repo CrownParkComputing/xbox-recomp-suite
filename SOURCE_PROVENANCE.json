@@ -28,6 +28,14 @@
     "PGR1": {
       "source_checkout": "PGR1-XBERecomp",
       "upstream_commit": null
+    },
+    "LARush": {
+      "source_checkout": "SFRush-XBERecomp (contains L.A. Rush, title 4D570025)",
+      "upstream_commit": null,
+      "matching_xbe_sha256": "ffb5ac9c63592c571c31a05311dae137c72126f8f5836cfabdfc798185bfb4bd",
+      "overlay": "overlays/larush-sdk.patch",
+      "validation": "Desktop Story driving and collision mesh rendering; Android build only, device pending"
     }
-  }
+  },
+  "larush_overlay": "overlays/larush-sdk.patch"
 }
