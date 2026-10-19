@@ -514,7 +514,7 @@ bool VulkanRenderer::Init(uint32_t width, uint32_t height) {
         swap_ = std::make_unique<Swapchain>();
         if (!swap_->Init(ctx_, surface)) return false;
         // the chain's images are made again on resize: the framebuffers that hold their views go with them
-        swap_->on_views_gone = [this] { DropFramebuffers(); };
+        swap_->on_views_gone = [this] { DropSwapchainFramebuffers(); };
     }
     g_push = reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(vkGetDeviceProcAddr(ctx_.dev, "vkCmdPushDescriptorSet"));
     if (!g_push) g_push = reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(vkGetDeviceProcAddr(ctx_.dev, "vkCmdPushDescriptorSetKHR"));
@@ -748,6 +748,7 @@ VkFramebuffer VulkanRenderer::FramebufferFor(VkRenderPass pass, const Attachment
     if (!pass) return VK_NULL_HANDLE;
     FbKey key;
     key.pass = pass;
+    key.swapchain = a.color && !a.color->alloc;
     key.color = a.color ? a.color->target : VK_NULL_HANDLE;
     key.depth = a.depth ? a.depth->target : VK_NULL_HANDLE;
     key.w = w;
@@ -784,6 +785,19 @@ void VulkanRenderer::DropFramebuffers() {
             if (fb) vkDestroyFramebuffer(ctx_.dev, fb, nullptr);
         cache.clear();
     }
+}
+
+void VulkanRenderer::DropSwapchainFramebuffers() {
+    uint32_t dropped = 0, kept = 0;
+    for (auto& cache : framebuffers_) {
+        for (auto it = cache.begin(); it != cache.end();) {
+            if (!it->first.swapchain) { ++kept; ++it; continue; }
+            if (it->second) vkDestroyFramebuffer(ctx_.dev, it->second, nullptr);
+            it = cache.erase(it);
+            ++dropped;
+        }
+    }
+    LOG_FIRST(2, "vulkan: swapchain cleanup dropped %u framebuffers, kept %u offscreen", dropped, kept);
 }
 
 void VulkanRenderer::BeginRendering(const Attachments& a, uint32_t w, uint32_t h) {

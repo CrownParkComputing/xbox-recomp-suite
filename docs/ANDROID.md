@@ -43,8 +43,8 @@ six ports (Splashdown, Burnout 3, Links 2004, NFS Hot Pursuit 2, PGR1, and BLACK
 L.A. Rush subsequently passed SD folder boot, intro/title playback and a
 Home/reopen cycle: its native PID exited and a different PID booted directly
 from the remembered folder. All 2,132 SD game files matched their local SHA-256
-hashes. This establishes boot/lifecycle behavior; full Android driving remains
-unvalidated.
+hashes. Its later XACT locking fix also passed basic Story free roam, steering,
+reverse and collision checks; full races and mission completion remain open.
 NFS, Burnout and Links' old private data was removed only after every SD
 file hash matched and boot from SD succeeded; saves/settings were retained.
 Those local user data/checksum files are deliberately absent from this repository.
@@ -66,11 +66,18 @@ PCM, but DSP/reverb and velocity Doppler fidelity remain incomplete.
 
 L.A. Rush's first presentation initially crashed in Adreno's
 `vkEndCommandBuffer`: swapchain creation deleted offscreen framebuffers already
-referenced by recorded guest clears. Its isolated SDK overlay now marks
+referenced by recorded guest clears. The shared SDK now marks
 swapchain-backed framebuffers and drops only those when swapchain views expire.
 The corrected device build retained the three offscreen framebuffers and
 completed intro/title playback. BLACK's custom renderer already applies the
 same lifetime rule.
+
+The shared audio mixer retains mix-in bus routing, so PGR's opponent engines
+inherit volume and 3D placement. Its XDK 3925 sound-mode wrapper is identified
+separately from maximum distance. Final stereo peak limiting prevents overloaded
+voices from hard clipping; DSP/reverb fidelity still requires comparison by ear.
+XACT's DISPATCH_LEVEL regions are also serialized across host threads: merely
+updating the emulated IRQL byte allowed L.A. Rush's event queue to race.
 
 Logs are private `files/logs` and use each title's tag in logcat. Examples:
 

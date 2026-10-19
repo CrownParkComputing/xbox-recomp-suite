@@ -1,3 +1,70 @@
+--- a/runtime/gpu/state.h
++++ b/runtime/gpu/state.h
+@@ -167,6 +167,7 @@
+     struct Stream {
+         uint32_t vb = 0;  // guest D3DVertexBuffer
+         uint32_t stride = 0;
++        uint32_t offset = 0;  // SetVertexShaderInput's per-stream byte offset
+     };
+     std::array<Stream, 16> streams{};
+     uint32_t index_buffer = 0, index_data = 0, base_vertex = 0;
+--- a/runtime/gpu/vertex.cpp
++++ b/runtime/gpu/vertex.cpp
+@@ -301,7 +301,7 @@
+     using namespace kernel;
+     const auto& st = s.streams[size_t(in.stream)];
+     uint32_t stride = StrideOf(s, layout, in);
+-    const uint8_t* data = static_cast<const uint8_t*>(HostPtr(mem::VirtualFromPhysical(R32(st.vb + kResData))));
++    const uint8_t* data = static_cast<const uint8_t*>(HostPtr(mem::VirtualFromPhysical(R32(st.vb + kResData)) + st.offset));
+     int slot = int(out.buffer_count);
+     if (dense) {
+         out.buffers[out.buffer_count++] = {data + size_t(d.first_vertex) * stride, d.span * stride, stride};
+@@ -392,7 +392,7 @@
+     for (int k = 0; k < nregs; k++) {
+         const auto& in = inputs.layout.inputs[size_t(inputs.regs[k])];
+         const auto& st = s.streams[size_t(in.stream)];
+-        uint32_t data = mem::VirtualFromPhysical(R32(st.vb + kResData));
++        uint32_t data = mem::VirtualFromPhysical(R32(st.vb + kResData)) + st.offset;
+         uint32_t stride = StrideOf(s, inputs.layout, in);
+         const uint8_t* src = static_cast<const uint8_t*>(HostPtr(data + in.offset));
+         for (uint32_t v = 0; v < n; v++) {
+--- a/runtime/gpu/vulkan.cpp
++++ b/runtime/gpu/vulkan.cpp
+@@ -513,7 +513,8 @@
+         }
+         swap_ = std::make_unique<Swapchain>();
+         if (!swap_->Init(ctx_, surface)) return false;
+-        // the chain's images are made again on resize: the framebuffers that hold their views go with them
++        // Guest draws may already reference offscreen framebuffers when the
++        // first presentation creates the swapchain. Only its own views expire.
+         swap_->on_views_gone = [this] { DropSwapchainFramebuffers(); };
+     }
+     g_push = reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(vkGetDeviceProcAddr(ctx_.dev, "vkCmdPushDescriptorSet"));
+@@ -748,9 +749,9 @@
+     if (!pass) return VK_NULL_HANDLE;
+     FbKey key;
+     key.pass = pass;
+-    key.swapchain = a.color && !a.color->alloc;
+     key.color = a.color ? a.color->target : VK_NULL_HANDLE;
+     key.depth = a.depth ? a.depth->target : VK_NULL_HANDLE;
++    key.swapchain = a.color && !a.color->alloc;
+     key.w = w;
+     key.h = h;
+     auto& cache = framebuffers_[frame_ % kFrames];
+--- a/runtime/gpu/vulkan.h
++++ b/runtime/gpu/vulkan.h
+@@ -374,10 +374,10 @@
+     std::unordered_map<uint64_t, VkPipeline> pass_psos_;
+     // the render pass fall-back's passes, and the framebuffers of the frame slot being recorded
+     struct FbKey {
+-        bool swapchain = false;
+         VkRenderPass pass = VK_NULL_HANDLE;
+         VkImageView color = VK_NULL_HANDLE, depth = VK_NULL_HANDLE;
+         uint32_t w = 0, h = 0;
++        bool swapchain = false;
+         bool operator==(const FbKey&) const = default;
+     };
+     struct FbKeyHash {
 --- a/runtime/kernel/files.cpp
 +++ b/runtime/kernel/files.cpp
 @@ -78,6 +78,7 @@
@@ -45,249 +112,6 @@
  }
  
  // ReadFileEx/WriteFileEx pass the completion routine as APC context and the
---- a/runtime/xdk/xapi.cpp
-+++ b/runtime/xdk/xapi.cpp
-@@ -94,7 +94,13 @@
-     if (!p.connected) return 1167;  // ERROR_DEVICE_NOT_CONNECTED
-     std::lock_guard<std::mutex> lock(g_ports_lock);
-     Handle& h = g_handles[a[0]];
--    if (std::memcmp(&p, &h.last, sizeof(p))) h.packet++;
-+    // Pad contains padding after connected. Only report values determine a
-+    // packet change; uninitialized padding made a stationary pad change on
-+    // successive reads in the same frame.
-+    const auto& old = h.last;
-+    if (p.connected != old.connected || p.buttons != old.buttons ||
-+        std::memcmp(p.analog, old.analog, sizeof(p.analog)) ||
-+        p.lx != old.lx || p.ly != old.ly || p.rx != old.rx || p.ry != old.ry) h.packet++;
-     h.last = p;
-     uint32_t s = a[1];
-     W32(s, h.packet);  // XINPUT_STATE: packet, buttons, 8 analog buttons, thumbs
---- a/runtime/xdk/dsound.cpp
-+++ b/runtime/xdk/dsound.cpp
-@@ -9,6 +9,7 @@
- #include <vector>
- 
- #include "audio/audio.h"
-+#include "xdk/dsound_voice.h"
- #include "xbe/xbe.h"
- #include "xdk/hle.h"
- #include "xdk/layout.h"
-@@ -107,6 +108,10 @@
-     bool active = false, ending = false;  // stream: took a packet since it went quiet, quiet again once they run out
-     double pos = 0;  // frames
-     uint32_t freq = 0;
-+    float pitch = 1, spatial_pitch = 1;
-+    bool explicit_spatial = false;
-+    float spatial_gain = 1, spatial_pan = 0;
-+    uint32_t spatial_data[14] = {}, output_buffer = 0;
-     // stream
-     uint32_t max_packets = 1, callback = 0, context = 0;
-     std::deque<Packet> packets;
-@@ -209,7 +214,7 @@
- 
- // gain of voice channel c on host left and right. A hardware voice holds two channels and owns a run of slots,
- // which alternate left and right.
--void Levels(Voice& v, float g[2][2]) {
-+void LocalLevels(Voice& v, float g[2][2]) {
-     static const uint8_t kFront[2] = {0, 1};
-     const uint8_t* bin = v.nbins ? v.bin : kFront;
-     uint32_t n = v.nbins ? v.nbins : 2, voices = (std::max<uint32_t>(v.channels, 1) - 1) / 2 + 1;
-@@ -227,6 +232,13 @@
-             if (!speakers || b == 2 || (b & 1)) g[c][1] = std::max(g[c][1], x);
-         }
-     }
-+    if (v.explicit_spatial) {
-+        for (int c = 0; c < 2; c++) {
-+            g[c][0] *= v.spatial_gain * std::min(1.0f, 1.0f - v.spatial_pan);
-+            g[c][1] *= v.spatial_gain * std::min(1.0f, 1.0f + v.spatial_pan);
-+        }
-+        return;
-+    }
-     if (!v.is3d || v.mode == 2) return;
-     bool rel = v.mode == 1;  // the position is already in listener space
-     float d[3] = {v.p[0], v.p[1], v.p[2]};
-@@ -252,6 +264,23 @@
-     }
- }
- 
-+void Levels(Voice& v, float g[2][2]) {
-+    LocalLevels(v, g);
-+    uint32_t output = v.output_buffer;
-+    // A mix-in buffer contributes bus volume and spatialization to its inputs.
-+    for (unsigned depth = 0; output && depth < 32; ++depth) {
-+        auto it = g_voices.find(output);
-+        if (it == g_voices.end()) break;
-+        float bus[2][2];
-+        LocalLevels(it->second, bus);
-+        for (unsigned c = 0; c < 2; ++c) {
-+            g[c][0] *= std::max(bus[0][0], bus[1][0]);
-+            g[c][1] *= std::max(bus[0][1], bus[1][1]);
-+        }
-+        output = it->second.output_buffer;
-+    }
-+}
-+
- // a stream goes quiet: the synch hold ends, a started one loses its pause as well
- void Deactivate(Voice& v) {
-     v.sync = false;
-@@ -267,7 +296,7 @@
-         float g[2][2];
-         Levels(v, g);
-         uint32_t base = v.data + v.play_start;
--        double step = double(v.freq ? v.freq : v.rate) / audio::kRate;
-+        double step = double(v.freq ? v.freq : v.rate) / audio::kRate * v.pitch * v.spatial_pitch;
-         for (uint32_t i = 0; i < frames; i++) {
-             uint32_t f = uint32_t(v.pos);
-             float a, b, a1, b1;  // this frame and the next, interpolated between
-@@ -422,6 +451,82 @@
- 
- }  // namespace
- 
-+namespace dsound {
-+uint32_t Use3DVoiceData(uint32_t object, bool enabled) {
-+    std::lock_guard<std::recursive_mutex> lock(g_lock);
-+    Voice* v = Find(object);
-+    if (!v) return 0x80070057;
-+    v->explicit_spatial = enabled;
-+    if (!enabled) { v->spatial_gain = v->spatial_pitch = 1; v->spatial_pan = 0; }
-+    return 0;
-+}
-+uint32_t Set3DVoiceData(uint32_t object, uint32_t data) {
-+    std::lock_guard<std::recursive_mutex> lock(g_lock);
-+    Voice* v = Find(object);
-+    if (!v || !data) return 0x80070057;
-+    const uint32_t flags = R32(data);
-+    static constexpr unsigned offsets[] = {1, 2, 3, 5, 7, 9, 10, 12};
-+    static constexpr unsigned counts[] = {1, 1, 2, 2, 2, 1, 2, 2};
-+    for (unsigned bit = 0; bit < 8; ++bit)
-+        if (flags & (1u << bit))
-+            for (unsigned i = 0; i < counts[bit]; ++i)
-+                v->spatial_data[offsets[bit] + i] = R32(data + (offsets[bit] + i) * 4);
-+    if (flags & 1) v->spatial_gain = Db(int32_t(R32(data + 4)));
-+    if (flags & 2) v->spatial_pitch = std::exp2(std::clamp(int32_t(R32(data + 8)), -32768, 32767) / 4096.0f);
-+    // The light HRTF calculator supplies azimuth in degrees at +0x28.
-+    // Stereo panning approximates its horizontal placement; APU reverb and
-+    // HRTF filter taps are not reproduced by the host mixer.
-+    if (flags & 0x40) {
-+        const float azimuth = F32(R32(data + 0x28));
-+        if (std::isfinite(azimuth)) v->spatial_pan = std::sin(azimuth * 0.01745329252f);
-+    }
-+    return 0;
-+}
-+uint32_t GetVoiceProperties(uint32_t object, uint32_t data) {
-+    std::lock_guard<std::recursive_mutex> lock(g_lock);
-+    Voice* v = Find(object);
-+    if (!v || !data) return 0x80070057;
-+    // DSVOICEPROPS: count, eight {mixbin, millibels} pairs, pitch,
-+    // distance attenuation, Doppler pitch, and I3DL2 coefficients.
-+    const unsigned count = v->nbins ? v->nbins : 2;
-+    W32(data, count);
-+    for (unsigned i = 0; i < 8; ++i) {
-+        const unsigned bin = v->nbins ? v->bin[i] : i;
-+        const float gain = v->volume * v->headroom * Db(v->bin_mb[bin & 31]);
-+        const int32_t volume = gain > 0 ? std::max(-10000, int(std::lround(2000 * std::log10(gain)))) : -10000;
-+        W32(data + 4 + i * 8, i < count ? bin : ~0u);
-+        W32(data + 8 + i * 8, i < count ? uint32_t(volume) : uint32_t(-10000));
-+    }
-+    W32(data + 0x44, uint32_t(int32_t(std::lround(4096 * std::log2(v->pitch)))));
-+    W32(data + 0x48, v->explicit_spatial ? v->spatial_data[1] : 0);
-+    W32(data + 0x4C, v->explicit_spatial ? v->spatial_data[2] : 0);
-+    W32(data + 0x50, v->explicit_spatial ? v->spatial_data[9] : 0);
-+    W32(data + 0x54, v->explicit_spatial ? v->spatial_data[7] : 0);
-+    W32(data + 0x58, v->explicit_spatial ? v->spatial_data[8] : 0);
-+    return 0;
-+}
-+uint32_t SetOutputBuffer(uint32_t object, uint32_t output) {
-+    std::lock_guard<std::recursive_mutex> lock(g_lock);
-+    Voice* v = Find(object);
-+    if (!v || (output && !Find(output))) return 0x80070057;
-+    uint32_t next = output;
-+    for (unsigned depth = 0; next; ++depth) {
-+        if (next == object || depth >= 32) return 0x80070057;
-+        Voice* target = Find(next);
-+        next = target ? target->output_buffer : 0;
-+    }
-+    v->output_buffer = output;
-+    return 0;
-+}
-+uint32_t SetPitch(uint32_t object, int32_t pitch) {
-+    std::lock_guard<std::recursive_mutex> lock(g_lock);
-+    Voice* v = Find(object);
-+    if (!v) return 0x80070057;
-+    v->pitch = std::exp2(std::clamp(pitch, -32768, 32767) / 4096.0f);
-+    return 0;
-+}
-+}
-+
- // device
- 
- // DSOUND objects are the host's; .XTLID names linked exports that would still run console code on them
-@@ -486,7 +591,13 @@
- }
- HLE_STDCALL(IDirectSound_Release, 1) { return 0; }
- HLE_STDCALL(DirectSoundUseFullHRTF, 0) { return 0; }
-+// This selects guest-side 3D math callbacks as well as the hardware HRTF
-+// mode. XACT calls those callbacks directly when updating its 3D voices.
-+#if HAS_DirectSoundUseLightHRTF
-+HLE_WRAP(DirectSoundUseLightHRTF, 0) {}
-+#else
- HLE_STDCALL(DirectSoundUseLightHRTF, 0) { return 0; }
-+#endif
- // The guest hardware allocator is bypassed by the software mixer. Report its
- // available capacity here rather than leaving the original hardware counters at zero.
- HLE_STDCALL(IDirectSound_GetCaps, 2) {
-@@ -710,6 +821,7 @@
- }
- BUFFER(SetFrequency, 2) {
-     v.freq = a[1];
-+    v.pitch = 1;
-     return 0;
- }
- BUFFER(SetFilter, 2) { return 0; }
-@@ -753,10 +865,11 @@
-     for (uint32_t i = 0; a[1] && i < std::min<uint32_t>(a[2], 64); i++) v.curve.push_back(F32(R32(a[1] + i * 4)));
-     return 0;
- }
--BUFFER(SetOutputBuffer, 2) { return 0; }  // the voice keeps its own mix bins
-+BUFFER(SetOutputBuffer, 2) { return dsound::SetOutputBuffer(a[0], a[1]); }
- BUFFER(SetFormat, 2) {
-     ReadFormat(v, a[1]);
-     v.freq = 0;
-+    v.pitch = 1;
-     v.block = -1;
-     return 0;
- }
-@@ -825,6 +938,7 @@
-     FlushStream(v);
-     ReadFormat(v, a[1]);
-     v.freq = 0;  // the XDK sets the pitch back to the new format's own rate
-+    v.pitch = 1;
-     v.block = -1;
-     return 0;
- }
-@@ -884,6 +998,7 @@
- }
- STREAM(SetFrequency, 2) {
-     v.freq = a[1];
-+    v.pitch = 1;
-     return 0;
- }
- STREAM(SetFilter, 2) { return 0; }
---- /dev/null
-+++ b/runtime/xdk/dsound_voice.h
-@@ -0,0 +1,12 @@
-+#pragma once
-+#include <cstdint>
-+
-+// Titles using XACT pass precomputed DS3DVOICEDATA to these public APIs.
-+// The host object has no Xbox APU voice behind it.
-+namespace dsound {
-+uint32_t Use3DVoiceData(uint32_t object, bool enabled);
-+uint32_t Set3DVoiceData(uint32_t object, uint32_t data);
-+uint32_t GetVoiceProperties(uint32_t object, uint32_t data);
-+uint32_t SetPitch(uint32_t object, int32_t pitch);
-+uint32_t SetOutputBuffer(uint32_t object, uint32_t output);
-+}
 --- a/runtime/xdk/d3d8.cpp
 +++ b/runtime/xdk/d3d8.cpp
 @@ -382,6 +382,45 @@
@@ -352,93 +176,226 @@
  void SetMovieFrame(uint32_t data, uint32_t width, uint32_t height, uint32_t pitch, uint32_t x, uint32_t y);
  
  }  // namespace d3d
---- a/runtime/gpu/state.h
-+++ b/runtime/gpu/state.h
-@@ -167,6 +167,7 @@
-     struct Stream {
-         uint32_t vb = 0;  // guest D3DVertexBuffer
-         uint32_t stride = 0;
-+        uint32_t offset = 0;  // SetVertexShaderInput's per-stream byte offset
-     };
-     std::array<Stream, 16> streams{};
-     uint32_t index_buffer = 0, index_data = 0, base_vertex = 0;
---- a/runtime/gpu/vertex.cpp
-+++ b/runtime/gpu/vertex.cpp
-@@ -301,7 +301,7 @@
-     using namespace kernel;
-     const auto& st = s.streams[size_t(in.stream)];
-     uint32_t stride = StrideOf(s, layout, in);
--    const uint8_t* data = static_cast<const uint8_t*>(HostPtr(mem::VirtualFromPhysical(R32(st.vb + kResData))));
-+    const uint8_t* data = static_cast<const uint8_t*>(HostPtr(mem::VirtualFromPhysical(R32(st.vb + kResData)) + st.offset));
-     int slot = int(out.buffer_count);
-     if (dense) {
-         out.buffers[out.buffer_count++] = {data + size_t(d.first_vertex) * stride, d.span * stride, stride};
-@@ -392,7 +392,7 @@
-     for (int k = 0; k < nregs; k++) {
-         const auto& in = inputs.layout.inputs[size_t(inputs.regs[k])];
-         const auto& st = s.streams[size_t(in.stream)];
--        uint32_t data = mem::VirtualFromPhysical(R32(st.vb + kResData));
-+        uint32_t data = mem::VirtualFromPhysical(R32(st.vb + kResData)) + st.offset;
-         uint32_t stride = StrideOf(s, inputs.layout, in);
-         const uint8_t* src = static_cast<const uint8_t*>(HostPtr(data + in.offset));
-         for (uint32_t v = 0; v < n; v++) {
---- a/runtime/gpu/vulkan.cpp
-+++ b/runtime/gpu/vulkan.cpp
-@@ -513,8 +513,9 @@
-         }
-         swap_ = std::make_unique<Swapchain>();
-         if (!swap_->Init(ctx_, surface)) return false;
--        // the chain's images are made again on resize: the framebuffers that hold their views go with them
--        swap_->on_views_gone = [this] { DropFramebuffers(); };
-+        // Guest draws may already reference offscreen framebuffers when the
-+        // first presentation creates the swapchain. Only its own views expire.
-+        swap_->on_views_gone = [this] { DropSwapchainFramebuffers(); };
-     }
-     g_push = reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(vkGetDeviceProcAddr(ctx_.dev, "vkCmdPushDescriptorSet"));
-     if (!g_push) g_push = reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(vkGetDeviceProcAddr(ctx_.dev, "vkCmdPushDescriptorSetKHR"));
-@@ -750,6 +751,7 @@
-     key.pass = pass;
-     key.color = a.color ? a.color->target : VK_NULL_HANDLE;
-     key.depth = a.depth ? a.depth->target : VK_NULL_HANDLE;
-+    key.swapchain = a.color && !a.color->alloc;
-     key.w = w;
-     key.h = h;
-     auto& cache = framebuffers_[frame_ % kFrames];
-@@ -784,6 +786,19 @@
-             if (fb) vkDestroyFramebuffer(ctx_.dev, fb, nullptr);
-         cache.clear();
-     }
-+}
-+
-+void VulkanRenderer::DropSwapchainFramebuffers() {
-+    uint32_t dropped = 0, kept = 0;
-+    for (auto& cache : framebuffers_) {
-+        for (auto it = cache.begin(); it != cache.end();) {
-+            if (!it->first.swapchain) { ++kept; ++it; continue; }
-+            if (it->second) vkDestroyFramebuffer(ctx_.dev, it->second, nullptr);
-+            it = cache.erase(it);
-+            ++dropped;
-+        }
-+    }
-+    LOG_FIRST(2, "vulkan: swapchain cleanup dropped %u framebuffers, kept %u offscreen", dropped, kept);
- }
+--- a/runtime/xdk/dsound.cpp
++++ b/runtime/xdk/dsound.cpp
+@@ -10,6 +10,7 @@
  
- void VulkanRenderer::BeginRendering(const Attachments& a, uint32_t w, uint32_t h) {
---- a/runtime/gpu/vulkan.h
-+++ b/runtime/gpu/vulkan.h
-@@ -259,6 +259,7 @@
-     VkFramebuffer FramebufferFor(VkRenderPass pass, const Attachments& a, uint32_t w, uint32_t h);
-     void DropSlotFramebuffers();
-     void DropFramebuffers();
-+    void DropSwapchainFramebuffers();
-     void SetViewport(float x, float y, float w, float h);
-     void SetScissor(int32_t x0, int32_t y0, int32_t x1, int32_t y1);
-     void SetFullViewport(uint32_t w, uint32_t h);
-@@ -376,6 +377,7 @@
-         VkRenderPass pass = VK_NULL_HANDLE;
-         VkImageView color = VK_NULL_HANDLE, depth = VK_NULL_HANDLE;
-         uint32_t w = 0, h = 0;
-+        bool swapchain = false;
-         bool operator==(const FbKey&) const = default;
-     };
-     struct FbKeyHash {
+ #include "audio/audio.h"
+ #include "audio/limiter.h"
++#include "xdk/dsound_voice.h"
+ #include "xbe/xbe.h"
+ #include "xdk/hle.h"
+ #include "xdk/layout.h"
+@@ -68,13 +69,13 @@
+ #define SYM_IDirectSoundBuffer_SetRolloffCurve FFFFFF09
+ #define HAS_IDirectSoundBuffer_SetRolloffCurve 0
+ #endif
++#ifndef SYM_IDirectSoundBuffer_SetMode
++#define SYM_IDirectSoundBuffer_SetMode FFFFFF0E
++#define HAS_IDirectSoundBuffer_SetMode 0
++#endif
+ #ifndef SYM_IDirectSoundBuffer_StopEx
+ #define SYM_IDirectSoundBuffer_StopEx FFFFFF0A
+ #define HAS_IDirectSoundBuffer_StopEx 0
+-#endif
+-#ifndef SYM_IDirectSoundBuffer_SetMode
+-#define SYM_IDirectSoundBuffer_SetMode FFFFFF0E
+-#define HAS_IDirectSoundBuffer_SetMode 0
+ #endif
+ #ifndef SYM_DirectSoundUseLightHRTF
+ #define SYM_DirectSoundUseLightHRTF FFFFFF0B
+@@ -106,13 +107,16 @@
+     // buffer
+     // play region in bytes from data, loop region in bytes from the play region
+     uint32_t data = 0, bytes = 0, loop_start = 0, loop_len = 0, play_start = 0, play_len = 0;
+-    uint32_t output_buffer = 0;  // optional mix-in bus
+     uint32_t owned = 0;  // memory the library made for the buffer
+     bool playing = false, looping = false, paused = false;
+     bool sync = false;  // held until IDirectSound_SynchPlayback
+     bool active = false, ending = false;  // stream: took a packet since it went quiet, quiet again once they run out
+     double pos = 0;  // frames
+     uint32_t freq = 0;
++    float pitch = 1, spatial_pitch = 1;
++    bool explicit_spatial = false;
++    float spatial_gain = 1, spatial_pan = 0;
++    uint32_t spatial_data[14] = {}, output_buffer = 0;
+     // stream
+     uint32_t max_packets = 1, callback = 0, context = 0;
+     std::deque<Packet> packets;
+@@ -233,6 +237,13 @@
+             if (!speakers || b == 2 || (b & 1)) g[c][1] = std::max(g[c][1], x);
+         }
+     }
++    if (v.explicit_spatial) {
++        for (int c = 0; c < 2; c++) {
++            g[c][0] *= v.spatial_gain * std::min(1.0f, 1.0f - v.spatial_pan);
++            g[c][1] *= v.spatial_gain * std::min(1.0f, 1.0f + v.spatial_pan);
++        }
++        return;
++    }
+     if (!v.is3d || v.mode == 2) return;
+     bool rel = v.mode == 1;  // the position is already in listener space
+     float d[3] = {v.p[0], v.p[1], v.p[2]};
+@@ -290,7 +301,7 @@
+         float g[2][2];
+         Levels(v, g);
+         uint32_t base = v.data + v.play_start;
+-        double step = double(v.freq ? v.freq : v.rate) / audio::kRate;
++        double step = double(v.freq ? v.freq : v.rate) / audio::kRate * v.pitch * v.spatial_pitch;
+         for (uint32_t i = 0; i < frames; i++) {
+             uint32_t f = uint32_t(v.pos);
+             float a, b, a1, b1;  // this frame and the next, interpolated between
+@@ -447,6 +458,59 @@
+ }  // namespace
+ 
+ namespace dsound {
++uint32_t Use3DVoiceData(uint32_t object, bool enabled) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    Voice* v = Find(object);
++    if (!v) return 0x80070057;
++    v->explicit_spatial = enabled;
++    if (!enabled) { v->spatial_gain = v->spatial_pitch = 1; v->spatial_pan = 0; }
++    return 0;
++}
++uint32_t Set3DVoiceData(uint32_t object, uint32_t data) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    Voice* v = Find(object);
++    if (!v || !data) return 0x80070057;
++    const uint32_t flags = R32(data);
++    static constexpr unsigned offsets[] = {1, 2, 3, 5, 7, 9, 10, 12};
++    static constexpr unsigned counts[] = {1, 1, 2, 2, 2, 1, 2, 2};
++    for (unsigned bit = 0; bit < 8; ++bit)
++        if (flags & (1u << bit))
++            for (unsigned i = 0; i < counts[bit]; ++i)
++                v->spatial_data[offsets[bit] + i] = R32(data + (offsets[bit] + i) * 4);
++    if (flags & 1) v->spatial_gain = Db(int32_t(R32(data + 4)));
++    if (flags & 2) v->spatial_pitch = std::exp2(std::clamp(int32_t(R32(data + 8)), -32768, 32767) / 4096.0f);
++    // The light HRTF calculator supplies azimuth in degrees at +0x28.
++    // Stereo panning approximates its horizontal placement; APU reverb and
++    // HRTF filter taps are not reproduced by the host mixer.
++    if (flags & 0x40) {
++        const float azimuth = F32(R32(data + 0x28));
++        if (std::isfinite(azimuth)) v->spatial_pan = std::sin(azimuth * 0.01745329252f);
++    }
++    return 0;
++}
++uint32_t GetVoiceProperties(uint32_t object, uint32_t data) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    Voice* v = Find(object);
++    if (!v || !data) return 0x80070057;
++    // DSVOICEPROPS: count, eight {mixbin, millibels} pairs, pitch,
++    // distance attenuation, Doppler pitch, and I3DL2 coefficients.
++    const unsigned count = v->nbins ? v->nbins : 2;
++    W32(data, count);
++    for (unsigned i = 0; i < 8; ++i) {
++        const unsigned bin = v->nbins ? v->bin[i] : i;
++        const float gain = v->volume * v->headroom * Db(v->bin_mb[bin & 31]);
++        const int32_t volume = gain > 0 ? std::max(-10000, int(std::lround(2000 * std::log10(gain)))) : -10000;
++        W32(data + 4 + i * 8, i < count ? bin : ~0u);
++        W32(data + 8 + i * 8, i < count ? uint32_t(volume) : uint32_t(-10000));
++    }
++    W32(data + 0x44, uint32_t(int32_t(std::lround(4096 * std::log2(v->pitch)))));
++    W32(data + 0x48, v->explicit_spatial ? v->spatial_data[1] : 0);
++    W32(data + 0x4C, v->explicit_spatial ? v->spatial_data[2] : 0);
++    W32(data + 0x50, v->explicit_spatial ? v->spatial_data[9] : 0);
++    W32(data + 0x54, v->explicit_spatial ? v->spatial_data[7] : 0);
++    W32(data + 0x58, v->explicit_spatial ? v->spatial_data[8] : 0);
++    return 0;
++}
+ uint32_t SetOutputBuffer(uint32_t object, uint32_t output) {
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
+     Voice* v = Find(object);
+@@ -460,7 +524,14 @@
+     v->output_buffer = output;
+     return 0;
+ }
+-}  // namespace dsound
++uint32_t SetPitch(uint32_t object, int32_t pitch) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    Voice* v = Find(object);
++    if (!v) return 0x80070057;
++    v->pitch = std::exp2(std::clamp(pitch, -32768, 32767) / 4096.0f);
++    return 0;
++}
++}
+ 
+ // device
+ 
+@@ -526,7 +597,13 @@
+ }
+ HLE_STDCALL(IDirectSound_Release, 1) { return 0; }
+ HLE_STDCALL(DirectSoundUseFullHRTF, 0) { return 0; }
++// This selects guest-side 3D math callbacks as well as the hardware HRTF
++// mode. XACT calls those callbacks directly when updating its 3D voices.
++#if HAS_DirectSoundUseLightHRTF
++HLE_WRAP(DirectSoundUseLightHRTF, 0) {}
++#else
+ HLE_STDCALL(DirectSoundUseLightHRTF, 0) { return 0; }
++#endif
+ // The guest hardware allocator is bypassed by the software mixer. Report its
+ // available capacity here rather than leaving the original hardware counters at zero.
+ HLE_STDCALL(IDirectSound_GetCaps, 2) {
+@@ -750,6 +827,7 @@
+ }
+ BUFFER(SetFrequency, 2) {
+     v.freq = a[1];
++    v.pitch = 1;
+     return 0;
+ }
+ BUFFER(SetFilter, 2) { return 0; }
+@@ -806,6 +884,7 @@
+ BUFFER(SetFormat, 2) {
+     ReadFormat(v, a[1]);
+     v.freq = 0;
++    v.pitch = 1;
+     v.block = -1;
+     return 0;
+ }
+@@ -874,6 +953,7 @@
+     FlushStream(v);
+     ReadFormat(v, a[1]);
+     v.freq = 0;  // the XDK sets the pitch back to the new format's own rate
++    v.pitch = 1;
+     v.block = -1;
+     return 0;
+ }
+@@ -933,6 +1013,7 @@
+ }
+ STREAM(SetFrequency, 2) {
+     v.freq = a[1];
++    v.pitch = 1;
+     return 0;
+ }
+ STREAM(SetFilter, 2) { return 0; }
+--- /dev/null
++++ b/runtime/xdk/dsound_voice.h
+@@ -0,0 +1,12 @@
++#pragma once
++#include <cstdint>
++
++// Titles using XACT pass precomputed DS3DVOICEDATA to these public APIs.
++// The host object has no Xbox APU voice behind it.
++namespace dsound {
++uint32_t Use3DVoiceData(uint32_t object, bool enabled);
++uint32_t Set3DVoiceData(uint32_t object, uint32_t data);
++uint32_t GetVoiceProperties(uint32_t object, uint32_t data);
++uint32_t SetPitch(uint32_t object, int32_t pitch);
++uint32_t SetOutputBuffer(uint32_t object, uint32_t output);
++}
+--- a/runtime/xdk/xapi.cpp
++++ b/runtime/xdk/xapi.cpp
+@@ -94,7 +94,13 @@
+     if (!p.connected) return 1167;  // ERROR_DEVICE_NOT_CONNECTED
+     std::lock_guard<std::mutex> lock(g_ports_lock);
+     Handle& h = g_handles[a[0]];
+-    if (std::memcmp(&p, &h.last, sizeof(p))) h.packet++;
++    // Pad contains padding after connected. Only report values determine a
++    // packet change; uninitialized padding made a stationary pad change on
++    // successive reads in the same frame.
++    const auto& old = h.last;
++    if (p.connected != old.connected || p.buttons != old.buttons ||
++        std::memcmp(p.analog, old.analog, sizeof(p.analog)) ||
++        p.lx != old.lx || p.ly != old.ly || p.rx != old.rx || p.ry != old.ry) h.packet++;
+     h.last = p;
+     uint32_t s = a[1];
+     W32(s, h.packet);  // XINPUT_STATE: packet, buttons, 8 analog buttons, thumbs

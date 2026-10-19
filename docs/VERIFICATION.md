@@ -1,4 +1,4 @@
-# Verification record — 2026-10-19
+# Verification record — updated 2026-10-20
 
 ## Source import checks
 
@@ -64,7 +64,7 @@ the native PID exited on Home and a new PID booted without the picker.
 
 Initial device boot exposed an offscreen framebuffer lifetime bug: creating the
 first swapchain destroyed framebuffers still referenced by the unsubmitted
-command buffer, crashing Adreno in `vkEndCommandBuffer`. The title's SDK overlay
+command buffer, crashing Adreno in `vkEndCommandBuffer`. The shared renderer
 now removes only swapchain-backed framebuffers on view recreation. The corrected
 APK retained three offscreen framebuffers and rendered past the former crash.
 
@@ -76,3 +76,40 @@ following the SetVertexShaderInputDirect bridge. Five integration programs pass
 custom vertex input/byte offset/reference lifetime checks. APK signature and
 16 KiB ZIP alignment checks pass. Full races, mission completion and handheld
 performance remain unvalidated. See ports/LARush/PORT_STATUS.md.
+
+## PGR race audio and L.A. Rush driving crash
+
+PGR's original mixer ignored `SetOutputBuffer`: engine layers bypassed the mix-in
+buffers carrying car volume and 3D placement. It also misidentified the XDK 3925
+`SetMode` wrapper at `0xFADE8` as `SetMaxDistance`; a mode value of zero became a
+zero maximum distance and produced infinite/NaN gains once routing was enabled.
+The configuration and host API now distinguish those calls. Distance setters
+reject zero/non-finite distances. Bus gain, spatial placement, nested buses and
+cycle rejection are covered by **67 public-API integration checks** linked to the
+fresh Linux runtime. Linking the previous mixer into the same test fails at the
+bus-attenuation assertion.
+
+Native multi-car attract-race captures recorded pre-output peaks up to 7.125
+before the fix. Routing restores attenuation, and a linked stereo peak limiter
+keeps the final output below full scale without flattening overloaded samples.
+Quiet output passes unchanged; release recovery and non-finite input handling
+are tested. This is an output safeguard, not emulation of the original DSP effects.
+
+The reported L.A. Rush Android crash was a SIGSEGV in XACT's event-queue comparator
+after 128 seconds, not an Android memory-pressure exit. XACT raises IRQL to
+DISPATCH_LEVEL to protect its queue on the Xbox's single CPU. The runtime now
+serializes those elevated regions across host threads and preserves nested
+levels. The regression test rejects the previous unlocked behavior. Together,
+the concurrency and output-limiter tests pass **5 cases with no failed checks**.
+
+The updated IRQL build remained alive during several minutes of Android Story
+free roam, acceleration, steering, reverse and repeated impacts. Full missions,
+every vehicle and long-term stability remain open. Both titles' Linux executables
+and Android ARM64 libraries were rebuilt. The framebuffer lifetime fix is now
+shared, including PGR's legacy-render-pass Android path.
+
+After building PGR on Linux, run its audio checks without a window or audio device:
+
+```sh
+python3 ports/PGR1/tools/build_audio_smoke.py --run
+```

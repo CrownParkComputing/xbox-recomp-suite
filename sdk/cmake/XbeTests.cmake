@@ -14,6 +14,7 @@ function(add_xbe_tests target)
     add_executable(${target}
         ${TD}/main.cpp ${TD}/stubs.cpp ${TD}/test_formats.cpp ${TD}/test_shaders.cpp ${TD}/test_keys.cpp
         ${TD}/test_render.cpp ${TD}/test_iso.cpp ${TD}/test_keyboard.cpp ${TD}/test_nv2a_texture.cpp
+        ${TD}/irql.cpp ${TD}/test_audio_limiter.cpp
         ${RT}/kernel/disc.cpp ${RT}/gpu/texture.cpp ${RT}/gpu/vertex.cpp ${RT}/gpu/shaders.cpp ${RT}/kernel/memory.cpp
         ${RT}/core/log.cpp ${RT}/app/sdl_keys.cpp ${RT}/core/keyboard_pad.cpp ${RT}/gpu/nv2a_texture.cpp ${RT}/core/input.cpp ${XBE_SDK_DIR}/harness/reference_renderer.cpp
         ${RT}/gpu/vk_context.cpp ${RT}/gpu/vk_formats.cpp ${RT}/gpu/vk_shaders.cpp ${RT}/gpu/vk_swapchain.cpp

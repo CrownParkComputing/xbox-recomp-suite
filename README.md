@@ -16,9 +16,9 @@ is not evidence of complete gameplay support.
 | Burnout 3 | SD folder boot; loading completes and EA intro plays | Full gameplay/performance not revalidated here |
 | Links 2004 | SD folder boot; intro plays | Full gameplay/performance not revalidated here |
 | NFS Hot Pursuit 2 | SD folder boot; intro plays | Pause/standings text alignment remains open |
-| PGR1 | SD folder boot; intro plays | Full race graphics/performance not validated here |
+| PGR1 | SD folder boot; intro plays; Linux multi-car audio routing checked | Full Android race graphics/performance and listening comparison remain open |
 | BLACK | SD folder boot; intro and title screen | Full gameplay/performance not validated here |
-| L.A. Rush | SD folder boot, intro/title and fresh-process relaunch verified; desktop Story driving verified | Full Android driving, races and sustained performance remain unvalidated |
+| L.A. Rush | SD boot, intro/title, Story free roam and fresh-process relaunch verified; desktop Story driving verified | Full races, missions and sustained performance remain unvalidated |
 
 The shared Android launcher remembers the selected SD ISO/folder, skips the
 picker while it remains accessible, and ends the native game process on

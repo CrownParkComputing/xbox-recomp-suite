@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "audio/audio.h"
+#include "audio/limiter.h"
 #include "xbe/xbe.h"
 #include "xdk/hle.h"
 #include "xdk/layout.h"
@@ -71,6 +72,10 @@ X86Func* Find(uint32_t guest);
 #define SYM_IDirectSoundBuffer_StopEx FFFFFF0A
 #define HAS_IDirectSoundBuffer_StopEx 0
 #endif
+#ifndef SYM_IDirectSoundBuffer_SetMode
+#define SYM_IDirectSoundBuffer_SetMode FFFFFF0E
+#define HAS_IDirectSoundBuffer_SetMode 0
+#endif
 #ifndef SYM_DirectSoundUseLightHRTF
 #define SYM_DirectSoundUseLightHRTF FFFFFF0B
 #define HAS_DirectSoundUseLightHRTF 0
@@ -101,6 +106,7 @@ struct Voice {
     // buffer
     // play region in bytes from data, loop region in bytes from the play region
     uint32_t data = 0, bytes = 0, loop_start = 0, loop_len = 0, play_start = 0, play_len = 0;
+    uint32_t output_buffer = 0;  // optional mix-in bus
     uint32_t owned = 0;  // memory the library made for the buffer
     bool playing = false, looping = false, paused = false;
     bool sync = false;  // held until IDirectSound_SynchPlayback
@@ -209,7 +215,7 @@ void Complete(Voice& v, Packet& pk, uint32_t status) {
 
 // gain of voice channel c on host left and right. A hardware voice holds two channels and owns a run of slots,
 // which alternate left and right.
-void Levels(Voice& v, float g[2][2]) {
+void LocalLevels(Voice& v, float g[2][2]) {
     static const uint8_t kFront[2] = {0, 1};
     const uint8_t* bin = v.nbins ? v.bin : kFront;
     uint32_t n = v.nbins ? v.nbins : 2, voices = (std::max<uint32_t>(v.channels, 1) - 1) / 2 + 1;
@@ -249,6 +255,23 @@ void Levels(Voice& v, float g[2][2]) {
     for (int c = 0; c < 2; c++) {
         g[c][0] *= att * std::min(1.0f, 1.0f - pan);
         g[c][1] *= att * std::min(1.0f, 1.0f + pan);
+    }
+}
+
+void Levels(Voice& v, float g[2][2]) {
+    LocalLevels(v, g);
+    uint32_t output = v.output_buffer;
+    // A mix-in buffer contributes bus volume and spatialization to its inputs.
+    for (unsigned depth = 0; output && depth < 32; ++depth) {
+        auto it = g_voices.find(output);
+        if (it == g_voices.end()) break;
+        float bus[2][2];
+        LocalLevels(it->second, bus);
+        for (unsigned c = 0; c < 2; ++c) {
+            g[c][0] *= std::max(bus[0][0], bus[1][0]);
+            g[c][1] *= std::max(bus[0][1], bus[1][1]);
+        }
+        output = it->second.output_buffer;
     }
 }
 
@@ -325,7 +348,8 @@ void Render(float* out, uint32_t frames) {
             v.pos += step;
         }
     }
-    for (uint32_t i = 0; i < frames * 2; i++) out[i] = std::clamp(out[i], -1.0f, 1.0f);
+    static audio::PeakLimiter limiter;
+    limiter.Process(out, frames, audio::kRate);
 }
 
 int64_t NowMs() {
@@ -422,6 +446,22 @@ float F32(uint32_t v) {
 
 }  // namespace
 
+namespace dsound {
+uint32_t SetOutputBuffer(uint32_t object, uint32_t output) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    Voice* v = Find(object);
+    if (!v || (output && !Find(output))) return 0x80070057;
+    uint32_t next = output;
+    for (unsigned depth = 0; next; ++depth) {
+        if (next == object || depth >= 32) return 0x80070057;
+        Voice* target = Find(next);
+        next = target ? target->output_buffer : 0;
+    }
+    v->output_buffer = output;
+    return 0;
+}
+}  // namespace dsound
+
 // device
 
 // DSOUND objects are the host's; .XTLID names linked exports that would still run console code on them
@@ -436,7 +476,7 @@ static void AuditExports() {
         SYM(IDirectSound_DownloadEffectsImage), SYM(IDirectSound_GetEffectData), SYM(IDirectSound_CommitEffectData),
         SYM(IDirectSound_GetOutputLevels), SYM(IDirectSoundBuffer_SetPlayRegion), SYM(IDirectSoundBuffer_SetAllParameters),
         SYM(IDirectSoundBuffer_SetFormat), SYM(IDirectSoundBuffer_SetOutputBuffer), SYM(IDirectSoundBuffer_SetRolloffCurve),
-        SYM(IDirectSoundBuffer_StopEx),
+        SYM(IDirectSoundBuffer_StopEx), SYM(IDirectSoundBuffer_SetMode),
         SYM(XAudioDownloadEffectsImage), SYM(DirectSoundCreateBuffer), SYM(IDirectSound_CreateSoundBuffer),
         SYM(IDirectSoundBuffer_Release), SYM(IDirectSoundBuffer_Unlock), SYM(IDirectSoundBuffer_SetBufferData),
         SYM(IDirectSoundBuffer_Play), SYM(IDirectSoundBuffer_Stop), SYM(IDirectSoundBuffer_SetLoopRegion),
@@ -726,11 +766,20 @@ BUFFER(SetMixBins, 2) {
     return 0;
 }
 BUFFER(SetMaxDistance, 3) {
-    v.max_dist = F32(a[1]);
+    const float distance = F32(a[1]);
+    if (!std::isfinite(distance) || distance <= 0) return 0x80070057;
+    v.max_dist = distance;
     return 0;
 }
 BUFFER(SetMinDistance, 3) {
-    v.min_dist = F32(a[1]);
+    const float distance = F32(a[1]);
+    if (!std::isfinite(distance) || distance <= 0) return 0x80070057;
+    v.min_dist = distance;
+    return 0;
+}
+BUFFER(SetMode, 3) {
+    if (a[1] > 2) return 0x80070057;
+    v.mode = a[1];
     return 0;
 }
 BUFFER(SetPosition, 5) {
@@ -753,7 +802,7 @@ BUFFER(SetRolloffCurve, 4) {
     for (uint32_t i = 0; a[1] && i < std::min<uint32_t>(a[2], 64); i++) v.curve.push_back(F32(R32(a[1] + i * 4)));
     return 0;
 }
-BUFFER(SetOutputBuffer, 2) { return 0; }  // the voice keeps its own mix bins
+BUFFER(SetOutputBuffer, 2) { return dsound::SetOutputBuffer(a[0], a[1]); }
 BUFFER(SetFormat, 2) {
     ReadFormat(v, a[1]);
     v.freq = 0;

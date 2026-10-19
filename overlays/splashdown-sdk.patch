@@ -168,7 +168,7 @@
  }  // namespace gpu
 --- a/runtime/gpu/vulkan.cpp
 +++ b/runtime/gpu/vulkan.cpp
-@@ -1045,7 +1045,8 @@
+@@ -1059,7 +1059,8 @@
      if (!CreateTargetResource(t)) return nullptr;
      g_perf.targets++;
      t.data = slot.data;
@@ -178,7 +178,7 @@
      t.epoch = DirtyEpoch(slot.data);
      t.sig = MemSig(slot.data, t.bytes);
      Target& ref = targets_[slot.key];
-@@ -1680,6 +1681,10 @@
+@@ -1694,6 +1695,10 @@
      FillFogConstants(s, sh.prog, c);
      FillCombinerConstants(s, c);
      FillTextureConstants(s, stages, c);
@@ -189,7 +189,7 @@
      if (sh.fixed_transform) {
          FillTransformConstants(s, size, c);
          FillLightConstants(s, sh.fk, c);
-@@ -1746,6 +1751,7 @@
+@@ -1760,6 +1765,7 @@
      g_perf.draws++;
      if (cap_) CapStep(s.rt);
      if (DepthCopy(s)) return;
@@ -207,7 +207,7 @@
      uint64_t epoch = 0, sig = 0;  // last lock seen, guest memory as last matched
      bool drawn = false;           // the GPU wrote it since the last readback
      std::vector<uint8_t> read;    // what Sync left in guest memory
-@@ -330,6 +331,8 @@
+@@ -331,6 +332,8 @@
      CopySource PrepareCopySource(Target& t, const ShrinkOptions& o);
      ImageRef Shrink(Image& src, uint32_t w, uint32_t h, const ShrinkOptions& o = {});
      bool ReadBack(Image& res, uint32_t w, uint32_t h, std::vector<uint8_t>& out);
@@ -621,7 +621,7 @@
  HLE_STDCALL(D3DDevice_BeginPush, 1) {
 --- a/runtime/xdk/dsound.cpp
 +++ b/runtime/xdk/dsound.cpp
-@@ -118,6 +118,8 @@
+@@ -124,6 +124,8 @@
      bool is3d = false;
      uint32_t mode = 0;  // DS3DMODE: 1 head relative, 2 disabled
      float p[3] = {}, min_dist = 1, max_dist = 1e9f;
@@ -630,7 +630,7 @@
      // ADPCM block cache
      int64_t block = -1;
      int16_t decoded[65 * 8];
-@@ -234,7 +236,7 @@
+@@ -240,7 +242,7 @@
      float dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
      float att = 1;
      if (dist > v.min_dist && v.curve.empty()) {
@@ -639,7 +639,7 @@
      } else if (dist > v.min_dist && v.max_dist > v.min_dist) {
          // points spread evenly from min to max distance, 1.0 at min
          float at = (std::min(dist, v.max_dist) - v.min_dist) / (v.max_dist - v.min_dist) * v.curve.size();
-@@ -452,7 +454,32 @@
+@@ -492,7 +494,32 @@
          SYM(CDirectSoundStream_SetFrequency), SYM(CDirectSoundStream_SetFilter), SYM(CDirectSoundStream_SetHeadroom),
          SYM(CDirectSoundStream_SetMixBinVolumes), SYM(CDirectSoundStream_SetMixBins), SYM(CDirectSoundStream_SetMaxDistance),
          SYM(CDirectSoundStream_SetMinDistance), SYM(CDirectSoundStream_SetPosition), SYM(CDirectSoundStream_SetVelocity),
@@ -673,7 +673,7 @@
      std::string left;
      // the library's own section: the WMA decoder shares the export ids and touches no DSOUND object
      uint32_t lo = 0, hi = 0;
-@@ -738,6 +765,30 @@
+@@ -787,6 +814,30 @@
      return 0;
  }
  BUFFER(SetVelocity, 5) { return 0; }
@@ -704,7 +704,7 @@
  BUFFER(SetI3DL2Source, 3) { return 0; }
  // (this, DS3DBUFFER, apply): position at +4, distances at +0x34 and +0x38, mode at +0x3C
  BUFFER(SetAllParameters, 3) {
-@@ -914,4 +965,28 @@
+@@ -963,4 +1014,28 @@
      return 0;
  }
  STREAM(SetVelocity, 5) { return 0; }

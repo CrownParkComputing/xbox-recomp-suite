@@ -7,6 +7,7 @@
 #include "app/app.h"
 #include "kernel/crypto.h"
 #include "kernel/exports.h"
+#include "kernel/irql.h"
 #include "xbe/xbe.h"
 
 namespace kernel {
@@ -57,6 +58,7 @@ void PutAnsi(uint32_t str, const char* text) {
 }
 
 uint8_t& Irql() { return G<uint8_t>(Current()->kpcr + 0x24); }
+IrqlGate g_irql_gate;
 
 int64_t TimeoutArg(uint32_t ptr) { return ptr ? int64_t(R64(ptr)) : INT64_MAX; }
 
@@ -191,25 +193,25 @@ KERNEL_EXPORT(122, KeLeaveCriticalRegion, 0) { return 0; }
 
 KERNEL_FASTCALL(160, KfRaiseIrql) {
     uint8_t old = Irql();
-    Irql() = uint8_t(ctx.ecx);
+    g_irql_gate.Set(Irql(), uint8_t(ctx.ecx));
     return old;
 }
 
 KERNEL_FASTCALL(161, KfLowerIrql) {
-    Irql() = uint8_t(ctx.ecx);
+    g_irql_gate.Set(Irql(), uint8_t(ctx.ecx));
     return 0;
 }
 
 KERNEL_EXPORT(129, KeRaiseIrqlToDpcLevel, 0) {
     uint8_t old = Irql();
-    Irql() = 2;
+    g_irql_gate.Set(Irql(), 2);
     return old;
 }
 
 // one processor: synch level is dispatch level
 KERNEL_EXPORT(130, KeRaiseIrqlToSynchLevel, 0) {
     uint8_t old = Irql();
-    Irql() = 2;
+    g_irql_gate.Set(Irql(), 2);
     return old;
 }
 

@@ -259,6 +259,7 @@ private:
     VkFramebuffer FramebufferFor(VkRenderPass pass, const Attachments& a, uint32_t w, uint32_t h);
     void DropSlotFramebuffers();
     void DropFramebuffers();
+    void DropSwapchainFramebuffers();
     void SetViewport(float x, float y, float w, float h);
     void SetScissor(int32_t x0, int32_t y0, int32_t x1, int32_t y1);
     void SetFullViewport(uint32_t w, uint32_t h);
@@ -373,6 +374,7 @@ private:
     std::unordered_map<uint64_t, VkPipeline> pass_psos_;
     // the render pass fall-back's passes, and the framebuffers of the frame slot being recorded
     struct FbKey {
+        bool swapchain = false;
         VkRenderPass pass = VK_NULL_HANDLE;
         VkImageView color = VK_NULL_HANDLE, depth = VK_NULL_HANDLE;
         uint32_t w = 0, h = 0;

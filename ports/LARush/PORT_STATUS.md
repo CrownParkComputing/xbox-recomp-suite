@@ -1,4 +1,4 @@
-# L.A. Rush port status — 2026-10-19
+# L.A. Rush port status — 2026-10-20
 
 This is an experimental playable build, not a completed port.
 
@@ -38,6 +38,10 @@ This is an experimental playable build, not a completed port.
   swapchain creation deleted offscreen framebuffers referenced by recorded guest
   commands. Swapchain recreation now drops only its own framebuffers. The fixed
   build retained three offscreen framebuffers and completed intro/title playback.
+- XACT's event queue could be modified concurrently by host threads because
+  raising IRQL changed only a byte. DISPATCH_LEVEL now provides host exclusion,
+  including nested raises. This addresses the reported Android driving crash
+  in the queue comparator; concurrency tests detect the former behavior.
 
 ## Verified on Android (Retroid Pocket Flip 2)
 
@@ -48,10 +52,12 @@ This is an experimental playable build, not a completed port.
   controller initialize successfully.
 - Pressing Home ends the dedicated native game PID. Reopening starts a new PID
   from the remembered SD folder without showing the picker.
+- Several minutes of Story free roam, acceleration, steering, reverse and
+  collisions with the IRQL fix, beyond the reported 128-second crash point.
 
 ## Still open
 
-- Android driving, full races, mission completion, every vehicle, performance on Android, and
+- Full races, mission completion, every vehicle, performance on Android, and
   longer gameplay sessions are not validated. Xbox DSP effects/reverb, envelopes
   and LFOs remain incomplete in the shared software mixer.
 

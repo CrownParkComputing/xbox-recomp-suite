@@ -165,7 +165,7 @@ swapchain's required pre-rotation. Test a real device, not only Lavapipe.
 
 The shared renderer exposed the same lifetime fault on L.A. Rush's first Android
 frame: Adreno crashed in `vkEndCommandBuffer` after three offscreen framebuffers
-had been discarded. Its title overlay now marks swapchain-backed framebuffer
+had been discarded. The shared renderer now marks swapchain-backed framebuffer
 keys and uses selective cleanup. Device logs confirm that all three offscreen
 framebuffers survive initial swapchain creation; intro/title playback and a
 fresh-process relaunch then succeed.
@@ -221,3 +221,33 @@ function; a separate override named for the interior target will not run. Check
 the generated function mapping and actual call sites before choosing a hook.
 Verify an impact after implementing the bridge; a stationary intact car exercises
 a different vertex path.
+
+### PGR: engine buses, sound-mode signatures and clipping
+
+Capture a race with opponents when investigating thunder-like engine noise.
+PGR routes several engine layers into mix-in buffers; those buses carry volume
+and spatial placement. Ignoring SetOutputBuffer plays every layer directly.
+Apply bus levels through the routing chain, reject cycles, and test a muted bus,
+a distant car and several simultaneous inputs using the actual public APIs.
+
+Equal argument counts do not identify sound functions. In PGR's XDK 3925 image,
+0xFADE8 forwards an integer mode to the voice's +0x58 field. Labelling it
+SetMaxDistance turns mode zero into a zero distance and then infinite mixer gain.
+Check the final field store and test the wrapper at its real guest address.
+Reject non-finite/zero distances before they can poison the output.
+
+Measure peaks before the final output stage as well as after it. A linked stereo
+limiter preserves channel balance and waveform shape when many voices overload;
+quiet blocks should pass unchanged and recovery should be gradual. This avoids
+hard clipping while DSP dynamics/effects remain approximations.
+
+### L.A. Rush: single-CPU IRQL protection on concurrent hosts
+
+A driving crash in XACT's queue comparator was not an Android memory kill.
+The original engine protects that queue by raising IRQL to DISPATCH_LEVEL, which
+excludes competing threads on the single Xbox CPU. Updating KPCR.Irql alone does
+not provide that exclusion when native host threads run concurrently. Serialize
+entry across host threads and release only when lowering below DISPATCH_LEVEL;
+nested raises must retain the lock. Test competing mutations and demonstrate that
+the test fails with the old unlocked behavior, then exercise real driving past
+the original failure time.
