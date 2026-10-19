@@ -18,12 +18,12 @@ is not evidence of complete gameplay support.
 | NFS Hot Pursuit 2 | SD folder boot; intro plays | Pause/standings text alignment remains open |
 | PGR1 | SD folder boot; intro plays | Full race graphics/performance not validated here |
 | BLACK | SD folder boot; intro and title screen | Full gameplay/performance not validated here |
-| L.A. Rush | Android arm64 APK builds; desktop Story driving verified | Collision mesh fix verified on desktop; Android device test pending |
+| L.A. Rush | SD folder boot, intro/title and fresh-process relaunch verified; desktop Story driving verified | Full Android driving, races and sustained performance remain unvalidated |
 
 The shared Android launcher remembers the selected SD ISO/folder, skips the
 picker while it remains accessible, and ends the native game process on
-minimize/close. These behaviors were device-tested on the original six titles;
-L.A. Rush uses the same launcher and awaits device validation. Its former local
+minimize/close. SD boot, remembered selection and fresh-process restart were
+device-tested across all seven titles. L.A. Rush's former local
 folder name, SFRush-XBERecomp, was misleading: its game is L.A. Rush.
 
 ## Layout
@@ -66,8 +66,8 @@ adb shell am start -n com.larush.recomp/.LauncherActivity
 ```
 
 Connect a physical controller and select your ISO or extracted folder on the
-device. The launcher remembers that location. L.A. Rush's Android device test is
-pending; see the table above for each port's validation limits.
+device. The launcher remembers that location. See the table above for each
+port's validation limits.
 
 Replace `LARush` with `Splashdown`, `Burnout3`, `Links2004`, `NFSHP2`, `PGR1`, or
 `BLACK` to build another title. [The run guide](docs/RUNNING.md) lists executable

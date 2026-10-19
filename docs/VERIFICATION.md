@@ -56,8 +56,18 @@ included in this public source import.
 
 ## L.A. Rush addition
 
-The seventh source port has a compiled Android arm64 APK; it has not been
-installed or device-tested. No ADB device was connected during this work.
+The seventh source port has an Android arm64 APK installed on the Retroid Pocket
+Flip 2 (Android 13, Adreno 650). All 2,132 files in its SD game folder matched the
+local SHA-256 manifest. The launcher retained its document-tree grant and folder
+selection. Intro video, the title screen, and a Home/reopen cycle were verified;
+the native PID exited on Home and a new PID booted without the picker.
+
+Initial device boot exposed an offscreen framebuffer lifetime bug: creating the
+first swapchain destroyed framebuffers still referenced by the unsubmitted
+command buffer, crashing Adreno in `vkEndCommandBuffer`. The title's SDK overlay
+now removes only swapchain-backed framebuffers on view recreation. The corrected
+APK retained three offscreen framebuffers and rendered past the former crash.
+
 Desktop Vulkan validation used the real retail guest code on Lavapipe, with
 intro video/audio, profiles, Story cutscenes, Beverly Hills driving, acceleration,
 reverse, steering, pause and map. Vehicle meshes remain visible after two impacts

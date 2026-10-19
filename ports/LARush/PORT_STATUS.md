@@ -34,12 +34,24 @@ This is an experimental playable build, not a completed port.
   streams and byte offsets, retains their buffers and restores ordinary bindings
   on reset. Damaged meshes render after two reproduced impacts, including reverse
   and steering. The trace no longer drops the vehicle draws for missing streams.
+- First presentation on Android crashed in Adreno's `vkEndCommandBuffer` because
+  swapchain creation deleted offscreen framebuffers referenced by recorded guest
+  commands. Swapchain recreation now drops only its own framebuffers. The fixed
+  build retained three offscreen framebuffers and completed intro/title playback.
+
+## Verified on Android (Retroid Pocket Flip 2)
+
+- Installed signed/aligned ARM64 APK; all 2,132 SD game files match their local
+  SHA-256 hashes (3,324,641,853 bytes).
+- Persisted read access to the selected SD document tree; direct game boot.
+- XMV intro video and title screen; SDL AAudio output and a physical Xbox
+  controller initialize successfully.
+- Pressing Home ends the dedicated native game PID. Reopening starts a new PID
+  from the remembered SD folder without showing the picker.
 
 ## Still open
 
-- Android APK compiles and is signed/aligned, but this title has not been installed
-  or tested on the handheld because no ADB device is connected.
-- Full races, mission completion, every vehicle, performance on Android, and
+- Android driving, full races, mission completion, every vehicle, performance on Android, and
   longer gameplay sessions are not validated. Xbox DSP effects/reverb, envelopes
   and LFOs remain incomplete in the shared software mixer.
 

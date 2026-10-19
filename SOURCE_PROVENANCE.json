@@ -34,7 +34,7 @@
       "upstream_commit": null,
       "matching_xbe_sha256": "ffb5ac9c63592c571c31a05311dae137c72126f8f5836cfabdfc798185bfb4bd",
       "overlay": "overlays/larush-sdk.patch",
-      "validation": "Desktop Story driving and collision mesh rendering; Android build only, device pending"
+      "validation": "Desktop Story driving and collision mesh rendering; Android SD boot, intro/title and Home/reopen with a fresh native PID; Android driving pending"
     }
   },
   "larush_overlay": "overlays/larush-sdk.patch"

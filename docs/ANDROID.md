@@ -40,7 +40,11 @@ There is no touch overlay.
 The connected Retroid Pocket Flip 2 (Android 13, Adreno 650, Vulkan 1.1.128)
 passed SD boot, remembered selection, and fresh-session checks across the original
 six ports (Splashdown, Burnout 3, Links 2004, NFS Hot Pursuit 2, PGR1, and BLACK).
-L.A. Rush has a compiled APK but has not been device-tested.
+L.A. Rush subsequently passed SD folder boot, intro/title playback and a
+Home/reopen cycle: its native PID exited and a different PID booted directly
+from the remembered folder. All 2,132 SD game files matched their local SHA-256
+hashes. This establishes boot/lifecycle behavior; full Android driving remains
+unvalidated.
 NFS, Burnout and Links' old private data was removed only after every SD
 file hash matched and boot from SD succeeded; saves/settings were retained.
 Those local user data/checksum files are deliberately absent from this repository.
@@ -59,6 +63,14 @@ Splashdown's 4531 state indices differ from later XDKs. The isolated overlay map
 those indices, preserves vertex point size, and generates stage-3 sprite UVs;
 this restores jet-ski spray. Its music, engine and water sources produce mixed
 PCM, but DSP/reverb and velocity Doppler fidelity remain incomplete.
+
+L.A. Rush's first presentation initially crashed in Adreno's
+`vkEndCommandBuffer`: swapchain creation deleted offscreen framebuffers already
+referenced by recorded guest clears. Its isolated SDK overlay now marks
+swapchain-backed framebuffers and drops only those when swapchain views expire.
+The corrected device build retained the three offscreen framebuffers and
+completed intro/title playback. BLACK's custom renderer already applies the
+same lifetime rule.
 
 Logs are private `files/logs` and use each title's tag in logcat. Examples:
 

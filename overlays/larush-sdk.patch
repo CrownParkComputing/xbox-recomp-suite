@@ -382,3 +382,63 @@
          uint32_t stride = StrideOf(s, inputs.layout, in);
          const uint8_t* src = static_cast<const uint8_t*>(HostPtr(data + in.offset));
          for (uint32_t v = 0; v < n; v++) {
+--- a/runtime/gpu/vulkan.cpp
++++ b/runtime/gpu/vulkan.cpp
+@@ -513,8 +513,9 @@
+         }
+         swap_ = std::make_unique<Swapchain>();
+         if (!swap_->Init(ctx_, surface)) return false;
+-        // the chain's images are made again on resize: the framebuffers that hold their views go with them
+-        swap_->on_views_gone = [this] { DropFramebuffers(); };
++        // Guest draws may already reference offscreen framebuffers when the
++        // first presentation creates the swapchain. Only its own views expire.
++        swap_->on_views_gone = [this] { DropSwapchainFramebuffers(); };
+     }
+     g_push = reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(vkGetDeviceProcAddr(ctx_.dev, "vkCmdPushDescriptorSet"));
+     if (!g_push) g_push = reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(vkGetDeviceProcAddr(ctx_.dev, "vkCmdPushDescriptorSetKHR"));
+@@ -750,6 +751,7 @@
+     key.pass = pass;
+     key.color = a.color ? a.color->target : VK_NULL_HANDLE;
+     key.depth = a.depth ? a.depth->target : VK_NULL_HANDLE;
++    key.swapchain = a.color && !a.color->alloc;
+     key.w = w;
+     key.h = h;
+     auto& cache = framebuffers_[frame_ % kFrames];
+@@ -784,6 +786,19 @@
+             if (fb) vkDestroyFramebuffer(ctx_.dev, fb, nullptr);
+         cache.clear();
+     }
++}
++
++void VulkanRenderer::DropSwapchainFramebuffers() {
++    uint32_t dropped = 0, kept = 0;
++    for (auto& cache : framebuffers_) {
++        for (auto it = cache.begin(); it != cache.end();) {
++            if (!it->first.swapchain) { ++kept; ++it; continue; }
++            if (it->second) vkDestroyFramebuffer(ctx_.dev, it->second, nullptr);
++            it = cache.erase(it);
++            ++dropped;
++        }
++    }
++    LOG_FIRST(2, "vulkan: swapchain cleanup dropped %u framebuffers, kept %u offscreen", dropped, kept);
+ }
+ 
+ void VulkanRenderer::BeginRendering(const Attachments& a, uint32_t w, uint32_t h) {
+--- a/runtime/gpu/vulkan.h
++++ b/runtime/gpu/vulkan.h
+@@ -259,6 +259,7 @@
+     VkFramebuffer FramebufferFor(VkRenderPass pass, const Attachments& a, uint32_t w, uint32_t h);
+     void DropSlotFramebuffers();
+     void DropFramebuffers();
++    void DropSwapchainFramebuffers();
+     void SetViewport(float x, float y, float w, float h);
+     void SetScissor(int32_t x0, int32_t y0, int32_t x1, int32_t y1);
+     void SetFullViewport(uint32_t w, uint32_t h);
+@@ -376,6 +377,7 @@
+         VkRenderPass pass = VK_NULL_HANDLE;
+         VkImageView color = VK_NULL_HANDLE, depth = VK_NULL_HANDLE;
+         uint32_t w = 0, h = 0;
++        bool swapchain = false;
+         bool operator==(const FbKey&) const = default;
+     };
+     struct FbKeyHash {

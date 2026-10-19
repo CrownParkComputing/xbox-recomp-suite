@@ -121,4 +121,5 @@ isolated in `overlays/larush-sdk.patch`; preparation checks and applies that pat
 to a private SDK copy. The retail executable used for validation has SHA-256
 `ffb5ac9c63592c571c31a05311dae137c72126f8f5836cfabdfc798185bfb4bd`.
 Diagnostic checks are described in ports/LARush/README.md. The desktop build
-reaches driving; Android compilation is verified and device testing is pending.
+reaches driving. Android SD boot, intro/title and fresh-process relaunch are
+verified on the Retroid Pocket Flip 2; Android driving and full races are pending.

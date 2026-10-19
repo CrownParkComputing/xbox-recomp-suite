@@ -164,5 +164,6 @@ the lifecycle checks and detailed device notes.
   documented status. Intro playback alone does not establish gameplay support.
 
 The original six ports have device evidence listed in [VERIFICATION.md](VERIFICATION.md).
-L.A. Rush has desktop Story driving and a compiled Android APK; Android gameplay
-and full-race testing remain pending.
+L.A. Rush has desktop Story driving and Android SD boot, intro/title and
+fresh-process relaunch evidence. Android driving and full-race testing remain
+pending.

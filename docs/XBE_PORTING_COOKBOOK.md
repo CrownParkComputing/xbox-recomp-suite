@@ -163,6 +163,13 @@ framebuffers holding the old swapchain views; retire offscreen caches after the
 owning frame fence. Rotate the final blit and ImGui data consistently with the
 swapchain's required pre-rotation. Test a real device, not only Lavapipe.
 
+The shared renderer exposed the same lifetime fault on L.A. Rush's first Android
+frame: Adreno crashed in `vkEndCommandBuffer` after three offscreen framebuffers
+had been discarded. Its title overlay now marks swapchain-backed framebuffer
+keys and uses selective cleanup. Device logs confirm that all three offscreen
+framebuffers survive initial swapchain creation; intro/title playback and a
+fresh-process relaunch then succeed.
+
 ### Keep completion claims narrow
 
 Boot, intro playback, menu rendering, gameplay rendering, audio fidelity and
