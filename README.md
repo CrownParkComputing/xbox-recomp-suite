@@ -12,7 +12,7 @@ is not evidence of complete gameplay support.
 
 | Port | Android evidence at this snapshot | Main limitation |
 | --- | --- | --- |
-| Splashdown | SD ISO boot and native race; menu and spray fixes installed | Latest spray fix verified in a native race capture; handheld confirmation pending; DSP/reverb incomplete; missing Career opponents reported after skipping qualifying |
+| Splashdown | SD ISO boot and native race; menu and spray fixes installed | Spray comparison and Career handheld confirmation pending; native Career race has AI opponents; DSP/reverb incomplete |
 | Burnout 3 | SD folder boot; loading completes and EA intro plays | Full gameplay/performance not revalidated here |
 | Links 2004 | SD folder boot; intro plays | Full gameplay/performance not revalidated here |
 | NFS Hot Pursuit 2 | SD folder boot; intro plays | Pause/standings text alignment remains open |
@@ -36,23 +36,42 @@ folder name, SFRush-XBERecomp, was misleading: its game is L.A. Rush.
 - `tools/`: portable SDK preparation, Linux/Android builds, and source audit.
 - [`docs/XBE_PORTING_COOKBOOK.md`](docs/XBE_PORTING_COOKBOOK.md): porting workflow and lessons from these builds.
 - [`docs/BUILDING.md`](docs/BUILDING.md): reproducible commands and prerequisites.
+- [`docs/RUNNING.md`](docs/RUNNING.md): Linux launch commands and Android installation for every title.
 - [`docs/ANDROID.md`](docs/ANDROID.md): SD picker, lifecycle, controls, and device checks.
 
-## Build
+## Build and run
 
-On Linux, provide an extracted game under `ports/<title>/assets`, including its
-matching `default.xbe`, then run:
+Install the prerequisites in [the build guide](docs/BUILDING.md), then clone:
 
 ```sh
-python3 tools/prepare.py all
-python3 tools/build_linux.py Splashdown --generate-only
-python3 tools/build_android.py Splashdown --jobs 4
+git clone https://github.com/CrownParkComputing/xbox-recomp-suite.git
+cd xbox-recomp-suite
 ```
 
-The APK appears in `dist/Splashdown-arm64-debug.apk`. To build another title,
-replace `Splashdown` with `Burnout3`, `Links2004`, `NFSHP2`, `PGR1`, `BLACK`, or `LARush`.
-For a native desktop executable, omit `--generate-only` from the Linux command.
-Install the prerequisites in [the build guide](docs/BUILDING.md) first.
+For example, put your matching extracted L.A. Rush files in `ports/LARush/assets`
+with `default.xbe` at that folder's root. Build and launch on a Linux desktop:
+
+```sh
+python3 tools/build_linux.py LARush --jobs 4
+./ports/LARush/out/build/linux-release/LARush
+```
+
+To build Android, generate the guest code first if you skipped the desktop build:
+
+```sh
+python3 tools/build_linux.py LARush --generate-only --jobs 4
+python3 tools/build_android.py LARush --jobs 4
+adb install -r dist/LARush-arm64-debug.apk
+adb shell am start -n com.larush.recomp/.LauncherActivity
+```
+
+Connect a physical controller and select your ISO or extracted folder on the
+device. The launcher remembers that location. L.A. Rush's Android device test is
+pending; see the table above for each port's validation limits.
+
+Replace `LARush` with `Splashdown`, `Burnout3`, `Links2004`, `NFSHP2`, `PGR1`, or
+`BLACK` to build another title. [The run guide](docs/RUNNING.md) lists executable
+names, Android packages, ISO extraction, saves, and troubleshooting.
 
 Dependencies can be compiled without any game data:
 

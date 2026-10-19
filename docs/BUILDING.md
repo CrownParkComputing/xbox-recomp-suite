@@ -3,7 +3,8 @@
 ## Host tools
 
 Use a Linux x86-64 host with Python 3, Git, Clang/LLD, CMake 3.25+, Ninja,
-pkg-config, SDL3 development headers, a Vulkan loader/headers and a Vulkan driver.
+pkg-config, SDL3 development headers, Vulkan 1.3 development headers/loader and
+a working Vulkan driver. The desktop presets target x86-64-v2 CPUs.
 The existing host build scripts print package suggestions if tools are missing.
 PGR1 and Links' desktop movie replacements additionally need FFmpeg development
 packages (`libavcodec`, `libavformat`, `libswscale`, `libswresample`, `libavutil`).
@@ -27,8 +28,9 @@ python3 tools/prepare.py all
 python3 tools/build_linux.py Splashdown --generate-only --jobs 4
 ```
 
-The shared SDK is used for five ports. Splashdown gets a derived SDK under
-`.local/sdks/`, produced by applying `overlays/splashdown-sdk.patch` to `sdk/`.
+The shared SDK is used directly for five ports. Splashdown and L.A. Rush each
+get a derived SDK under `.local/sdks/`, produced by applying their respective
+`overlays/splashdown-sdk.patch` and `overlays/larush-sdk.patch` to `sdk/`.
 The tool installs relative, ignored `sdk` links into each port. Do not apply the
 older historical Splashdown patch series on top of this prepared SDK.
 The original seven-patch history is retained under `ports/Splashdown/patches`.
@@ -48,6 +50,17 @@ To extract a local image after building tools:
 ```sh
 ports/Splashdown/out/build/linux-release/iso_extract --all /path/to/your.iso ports/Splashdown/assets
 ```
+
+Build and launch the Linux game after supplying its files:
+
+```sh
+python3 tools/build_linux.py Splashdown --jobs 4
+./ports/Splashdown/out/build/linux-release/Splashdown
+```
+
+The runtime finds `ports/Splashdown/assets` above the executable. Launch from
+your normal graphical desktop session. See [RUNNING.md](RUNNING.md) for every
+title's executable name, saves, logs, and troubleshooting.
 
 ## Android
 
@@ -95,8 +108,10 @@ python3 tools/audit_source.py
 ```
 
 The audit checks the actual Git index for private inputs and secrets, verifies
-vendored dependency hashes, and reports file count/size. Private build inputs,
-SDK overlays, build products, saves and signing keys are ignored.
+vendored dependency hashes, and reports file count/size. Stage intended source
+changes before running it. Private build inputs, prepared SDK copies, build
+products, saves and signing keys are ignored. The SDK overlay patches are source
+and are tracked.
 
 
 ### L.A. Rush

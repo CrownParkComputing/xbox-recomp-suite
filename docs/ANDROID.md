@@ -38,8 +38,10 @@ There is no touch overlay.
    graphics, and save/reload separately. Intros alone do not validate gameplay.
 
 The connected Retroid Pocket Flip 2 (Android 13, Adreno 650, Vulkan 1.1.128)
-passed SD boot, remembered selection, and fresh-session checks across all six
-ports. NFS, Burnout and Links' old private data was removed only after every SD
+passed SD boot, remembered selection, and fresh-session checks across the original
+six ports (Splashdown, Burnout 3, Links 2004, NFS Hot Pursuit 2, PGR1, and BLACK).
+L.A. Rush has a compiled APK but has not been device-tested.
+NFS, Burnout and Links' old private data was removed only after every SD
 file hash matched and boot from SD succeeded; saves/settings were retained.
 Those local user data/checksum files are deliberately absent from this repository.
 
