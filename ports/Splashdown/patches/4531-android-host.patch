@@ -1,0 +1,66 @@
+--- a/runtime/core/log.cpp
++++ b/runtime/core/log.cpp
+@@ -12,6 +12,9 @@
+ 
+ #if defined(__ANDROID__)
+ #include <android/log.h>
++#ifndef XBE_ANDROID_LOG_TAG
++#define XBE_ANDROID_LOG_TAG "XboxXBE"
++#endif
+ #endif
+ 
+ namespace fs = std::filesystem;
+@@ -82,9 +85,9 @@
+     }
+     std::fwrite(line, 1, size_t(n), stderr);
+ #if defined(__ANDROID__)
+-    // an Android app's stderr goes nowhere: the same line goes to logcat, "NFSHP2" and one of its levels
++    // An Android app's stderr goes nowhere: mirror each line to its logcat tag.
+     static const int prio[] = {ANDROID_LOG_DEBUG, ANDROID_LOG_INFO, ANDROID_LOG_WARN, ANDROID_LOG_ERROR, ANDROID_LOG_INFO};
+-    __android_log_print(prio[int(lv)], "NFSHP2", "%.*s", n > 0 ? n - 1 : 0, line);
++    __android_log_print(prio[int(lv)], XBE_ANDROID_LOG_TAG, "%.*s", n > 0 ? n - 1 : 0, line);
+ #endif
+ }
+ 
+--- a/tests/test_shaders.cpp
++++ b/tests/test_shaders.cpp
+@@ -1,4 +1,4 @@
+-// the SDK's shader translation through DXC: every shape of shader it writes compiles for Vulkan, and lands where the
++// The SDK's shader translation: every shape of shader it writes compiles for Vulkan, and lands where the
+ // renderer binds its resources and constants
+ #include <cstddef>
+ #include <map>
+@@ -47,16 +47,22 @@
+             i += n;
+         }
+     }
+-    // the binding of the variable OpName calls name (DXC names resources by their HLSL names)
++    // DXC names a buffer variable; glslang names its struct and leaves the variable unnamed.
+     int BindingOf(const std::string& name) const {
+         for (auto& [id, n] : names)
+             if (n == name && binding.count(id)) return int(binding.at(id));
++        for (auto& [id, type] : var_type) {
++            auto pointer = pointer_to.find(type);
++            if (pointer == pointer_to.end()) continue;
++            auto block = names.find(pointer->second);
++            if (block != names.end() && block->second == name && binding.count(id)) return int(binding.at(id));
++        }
+         return -1;
+     }
+     // a constant buffer's member offset, by the block's type name and the member's
+     int Offset(const std::string& block, const std::string& member) const {
+         for (auto& [id, n] : names) {
+-            if (n != block || !members.count(id)) continue;
++            if ((n != block && "type." + n != block) || !members.count(id)) continue;
+             for (auto& [m, mn] : members.at(id))
+                 if (mn == member && offsets.count(id) && offsets.at(id).count(m)) return int(offsets.at(id).at(m));
+         }
+@@ -105,7 +111,7 @@
+ 
+ }  // namespace
+ 
+-TEST("shaders: DXC loads") {
++TEST("shaders: compiler loads") {
+     std::string why;
+     CHECK_MSG(gpu::vk::CompilerAvailable(why), why);
+ }

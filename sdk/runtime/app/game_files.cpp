@@ -1,0 +1,172 @@
+// The game in assets: its files, or a disc image (.iso) with this executable's xbe on it. The xbe must be the one
+// this executable was recompiled from; another release's would run its own data under this code.
+#include <algorithm>
+#include <cwctype>
+#include <cstdlib>
+#include <fstream>
+#include <climits>
+#include <cerrno>
+
+#include "app/app.h"
+#include "core/log.h"
+#include "image_symbols.h"
+#include "kernel/crypto.h"
+#include "kernel/disc.h"
+
+extern const char kImageSha1[];  // the xbe recompiled into this executable, written by CMake
+
+namespace app {
+
+namespace {
+
+namespace fs = std::filesystem;
+
+// assets beside the exe or in any folder above it (the build output)
+fs::path FindAssets() {
+    auto dir = ExeDir();
+    std::error_code ec;
+    for (int i = 0; i < 6; i++) {
+        if (fs::is_directory(dir / "assets", ec)) return dir / "assets";
+        if (!dir.has_parent_path() || dir.parent_path() == dir) break;
+        dir = dir.parent_path();
+    }
+    return {};
+}
+
+std::string Sha1(const std::vector<uint8_t>& data) {
+    alignas(8) uint8_t ctx[128];
+    uint8_t digest[20];
+    crypto::ShaInit(ctx);
+    crypto::ShaUpdate(ctx, data.data(), data.size());
+    crypto::ShaFinal(ctx, digest);
+    std::string hex;
+    for (uint8_t b : digest) {
+        hex += "0123456789abcdef"[b >> 4];
+        hex += "0123456789abcdef"[b & 15];
+    }
+    return hex;
+}
+
+bool ReadHostFile(const fs::path& path, std::vector<uint8_t>& out) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    out.assign(std::istreambuf_iterator<char>(f), {});
+    return true;
+}
+
+}  // namespace
+
+bool FindGame(GameFiles& game) {
+    fs::path assets = FindAssets();
+    std::vector<fs::path> isos;
+    std::vector<uint8_t> xbe;
+    if (const auto* selected = kernel::MountedDisc()) {
+        if (!selected->Load(IMAGE_XBE, xbe) || Sha1(xbe) != kImageSha1) {
+            LOGE("game: selected folder does not contain this build's %s", IMAGE_XBE);
+            return false;
+        }
+        game = {assets, std::move(xbe)};
+        LOGR("Game: %s from selected folder %s", IMAGE_XBE, selected->Path().string().c_str());
+        return true;
+    }
+    std::error_code ec;
+    if (!assets.empty())
+        for (auto& e : fs::directory_iterator(assets, ec)) {
+            std::wstring ext = e.path().extension().wstring();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return wchar_t(std::towlower(c)); });
+            if (ext == L".iso" && e.is_regular_file(ec)) isos.push_back(e.path());
+        }
+    std::sort(isos.begin(), isos.end());
+
+    // the first copy with this xbe wins, the extracted files before any image; another release is kept to offer
+    GameFiles other;
+    std::unique_ptr<kernel::Disc> other_disc;
+    fs::path other_name;
+    auto consider = [&](const fs::path& name, std::vector<uint8_t> xbe, std::unique_ptr<kernel::Disc> disc) {
+        std::string sha = Sha1(xbe);
+        bool match = sha == kImageSha1;
+        LOGR("Game: %s in %s, sha1 %s%s", IMAGE_XBE, name.string().c_str(), sha.c_str(), match ? "" : ", another release");
+        if (match) {
+            game = {assets, std::move(xbe)};
+            kernel::MountDisc(std::move(disc));
+            return true;
+        }
+        if (other_name.empty()) {
+            other = {assets, std::move(xbe)};
+            other_disc = std::move(disc);
+            other_name = name;
+        }
+        return false;
+    };
+
+    // Explicit image selection for testing or when extracted files beside the executable take priority.
+    const char* forced = std::getenv("XBE_DISC_IMAGE");
+    const char* descriptor = nullptr;
+#ifndef _WIN32
+    descriptor = std::getenv("XBE_DISC_FD");
+#endif
+    if ((forced && *forced) || (descriptor && *descriptor)) {
+        auto disc = std::make_unique<kernel::Disc>();
+        std::string error;
+        if (!forced || !*forced) forced = "selected game image";
+        bool opened = false;
+#ifndef _WIN32
+        if (descriptor && *descriptor) {
+            char* end = nullptr;
+            errno = 0;
+            const long fd = std::strtol(descriptor, &end, 10);
+            if (errno || !end || *end || fd < 0 || fd > INT_MAX) {
+                LOGE("game: invalid selected image descriptor");
+                return false;
+            }
+            opened = disc->OpenFd(int(fd), forced, error);
+        } else
+#endif
+            opened = disc->Open(forced, error);
+        if (!opened) {
+            LOGE("game: %s: %s", forced, error.c_str());
+            return false;
+        }
+        if (!disc->Load(IMAGE_XBE, xbe)) {
+            LOGE("game: %s has no %s", forced, IMAGE_XBE);
+            return false;
+        }
+        if (Sha1(xbe) != kImageSha1) {
+            LOGE("game: %s contains a different %s", forced, IMAGE_XBE);
+            return false;
+        }
+        game = {assets, std::move(xbe)};
+        kernel::MountDisc(std::move(disc));
+        LOGR("Game: %s from %s via %s", IMAGE_XBE, forced, descriptor && *descriptor ? "XBE_DISC_FD" : "XBE_DISC_IMAGE");
+        return true;
+    }
+
+    if (!assets.empty() && ReadHostFile(assets / IMAGE_XBE, xbe) && consider(assets, std::move(xbe), nullptr)) return true;
+    for (const fs::path& iso : isos) {
+        auto disc = std::make_unique<kernel::Disc>();
+        std::string error;
+        if (!disc->Open(iso, error)) {
+            LOGW("game: %s: %s", iso.string().c_str(), error.c_str());
+            continue;
+        }
+        if (!disc->Load(IMAGE_XBE, xbe)) {
+            LOGW("game: %s has no %s", iso.string().c_str(), IMAGE_XBE);
+            continue;
+        }
+        if (consider(iso, std::move(xbe), std::move(disc))) return true;
+    }
+
+    if (other_name.empty()) {
+        ShowError(kGame.missing);
+        return false;
+    }
+    std::wstring text = other_name.filename().wstring() +
+                        L" is a different release of the game than this build was made from, and will most likely "
+                        L"crash.\n\nStart it anyway?";
+    if (!AskYesNo(text.c_str())) return false;
+    game = std::move(other);
+    kernel::MountDisc(std::move(other_disc));
+    return true;
+}
+
+}  // namespace app

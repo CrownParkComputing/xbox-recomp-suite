@@ -1,0 +1,8 @@
+-std=c++20
+-xc++
+-Isrc
+-I../XboxXBE-Recomp/runtime
+-I../XboxXBE-Recomp/runtime/platform/compat
+-I.local/dxc/include
+-I.local/vma
+-I/usr/include/SDL3

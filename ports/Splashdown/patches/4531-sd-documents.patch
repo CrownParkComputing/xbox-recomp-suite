@@ -1,0 +1,293 @@
+diff --git a/runtime/kernel/disc.h b/runtime/kernel/disc.h
+--- a/runtime/kernel/disc.h
++++ b/runtime/kernel/disc.h
+@@ -7,6 +7,11 @@
+ #include <string>
+ #include <string_view>
+ #include <vector>
++#ifndef _WIN32
++#include <functional>
++#include <list>
++#include <mutex>
++#endif
+ 
+ namespace kernel {
+ 
+@@ -25,6 +30,15 @@
+     ~Disc();
+     // false with the reason when the file is no Xbox disc image
+     bool Open(const std::filesystem::path& path, std::string& error);
++#ifndef _WIN32
++    // Borrow a seekable descriptor supplied by Android's document picker.
++    // The disc owns a duplicate; the caller retains ownership of its descriptor.
++    bool OpenFd(int fd, const std::filesystem::path& name, std::string& error);
++    // An Android document tree. Each file's offset identifies a document. The
++    // callback transfers a fresh descriptor to this reader, which owns it.
++    bool OpenTree(Entry root, std::function<int(uint64_t)> open,
++                  const std::filesystem::path& name, std::string& error);
++#endif
+     // from the root, any case, ".." steps up; null when missing
+     const Entry* Find(const std::vector<std::string>& parts) const;
+     const Entry* Find(std::string_view path) const;  // backslash separated
+@@ -36,6 +50,7 @@
+ 
+ private:
+     uint32_t ReadAt(uint64_t at, void* out, uint32_t len) const;
++    bool ReadVolume(std::string& error);
+     bool ReadDir(Entry& dir, int depth);
+ 
+     intptr_t file_ = -1;  // HANDLE or fd
+@@ -43,6 +58,11 @@
+     uint64_t base_ = 0;  // the game partition
+     uint64_t time_ = 0;
+     Entry root_;
++#ifndef _WIN32
++    std::function<int(uint64_t)> open_document_;
++    mutable std::mutex documents_mutex_;
++    mutable std::list<std::pair<uint64_t, std::shared_ptr<int>>> documents_;
++#endif
+ };
+ 
+ // D: from a disc image instead of a folder, set before Boot
+diff --git a/runtime/kernel/disc.cpp b/runtime/kernel/disc.cpp
+--- a/runtime/kernel/disc.cpp
++++ b/runtime/kernel/disc.cpp
+@@ -3,6 +3,7 @@
+ #include <algorithm>
+ #include <cctype>
+ #include <cstring>
++#include <cerrno>
+ 
+ #ifdef _WIN32
+ #ifndef WIN32_LEAN_AND_MEAN
+@@ -87,6 +88,48 @@
+         error = "cannot open the file";
+         return false;
+     }
++    return ReadVolume(error);
++}
++
++#ifndef _WIN32
++bool Disc::OpenFd(int fd, const std::filesystem::path& name, std::string& error) {
++    path_ = name;
++    file_ = fd >= 0 ? fcntl(fd, F_DUPFD_CLOEXEC, 0) : -1;
++    if (file_ == -1) {
++        error = "cannot duplicate the selected image descriptor";
++        return false;
++    }
++    return ReadVolume(error);
++}
++
++bool Disc::OpenTree(Entry root, std::function<int(uint64_t)> open,
++                    const std::filesystem::path& name, std::string& error) {
++    std::function<bool(Entry&, int)> sort = [&](Entry& dir, int depth) {
++        if (!dir.dir || depth > 32) return false;
++        std::sort(dir.children.begin(), dir.children.end(),
++                  [](const Entry& a, const Entry& b) { return Upper(a.name) < Upper(b.name); });
++        std::string previous;
++        for (auto& entry : dir.children) {
++            if (entry.name.empty() || entry.name == "." || entry.name == ".." ||
++                entry.name.find_first_of("/\\") != std::string::npos ||
++                SameName(previous, entry.name)) return false;
++            previous = entry.name;
++            if (entry.dir && !sort(entry, depth + 1)) return false;
++        }
++        return true;
++    };
++    if (!open || !sort(root, 0)) {
++        error = "invalid game folder";
++        return false;
++    }
++    root_ = std::move(root);
++    path_ = name;
++    open_document_ = std::move(open);
++    return true;
++}
++#endif
++
++bool Disc::ReadVolume(std::string& error) {
+     for (uint64_t base : kPartitions) {
+         uint8_t volume[kSector];
+         if (ReadAt(base + kVolume, volume, kSector) != kSector || std::memcmp(volume, kMagic, kMagicSize) != 0 ||
+@@ -170,7 +213,32 @@
+ 
+ uint32_t Disc::Read(const Entry& file, uint64_t pos, void* out, uint32_t len) const {
+     if (file.dir || pos >= file.size) return 0;
+-    return ReadAt(file.offset + pos, out, uint32_t(std::min<uint64_t>(len, file.size - pos)));
++    len = uint32_t(std::min<uint64_t>(len, file.size - pos));
++#ifndef _WIN32
++    if (open_document_) {
++        std::shared_ptr<int> fd;
++        {
++            std::lock_guard lock(documents_mutex_);
++            auto it = std::find_if(documents_.begin(), documents_.end(),
++                                   [&](const auto& cached) { return cached.first == file.offset; });
++            if (it != documents_.end()) {
++                fd = it->second;
++                documents_.splice(documents_.begin(), documents_, it);
++            } else {
++                const int opened = open_document_(file.offset);
++                if (opened < 0) return 0;
++                fd = std::shared_ptr<int>(new int(opened), [](int* value) { close(*value); delete value; });
++                documents_.emplace_front(file.offset, fd);
++                if (documents_.size() > 64) documents_.pop_back();
++            }
++        }
++        // Retain the descriptor during concurrent reads, including eviction.
++        ssize_t got;
++        do { got = pread(*fd, out, len, off_t(pos)); } while (got < 0 && errno == EINTR);
++        return got > 0 ? uint32_t(got) : 0;
++    }
++#endif
++    return ReadAt(file.offset + pos, out, len);
+ }
+ 
+ bool Disc::Load(std::string_view path, std::vector<uint8_t>& out) const {
+diff --git a/runtime/app/game_files.cpp b/runtime/app/game_files.cpp
+--- a/runtime/app/game_files.cpp
++++ b/runtime/app/game_files.cpp
+@@ -4,6 +4,8 @@
+ #include <cwctype>
+ #include <cstdlib>
+ #include <fstream>
++#include <climits>
++#include <cerrno>
+ 
+ #include "app/app.h"
+ #include "core/log.h"
+@@ -58,6 +60,15 @@
+     fs::path assets = FindAssets();
+     std::vector<fs::path> isos;
+     std::vector<uint8_t> xbe;
++    if (const auto* selected = kernel::MountedDisc()) {
++        if (!selected->Load(IMAGE_XBE, xbe) || Sha1(xbe) != kImageSha1) {
++            LOGE("game: selected folder does not contain this build's %s", IMAGE_XBE);
++            return false;
++        }
++        game = {assets, std::move(xbe)};
++        LOGR("Game: %s from selected folder %s", IMAGE_XBE, selected->Path().string().c_str());
++        return true;
++    }
+     std::error_code ec;
+     if (!assets.empty())
+         for (auto& e : fs::directory_iterator(assets, ec)) {
+@@ -89,10 +100,30 @@
+     };
+ 
+     // Explicit image selection for testing or when extracted files beside the executable take priority.
+-    if (const char* forced = std::getenv("XBE_DISC_IMAGE"); forced && *forced) {
++    const char* forced = std::getenv("XBE_DISC_IMAGE");
++    const char* descriptor = nullptr;
++#ifndef _WIN32
++    descriptor = std::getenv("XBE_DISC_FD");
++#endif
++    if ((forced && *forced) || (descriptor && *descriptor)) {
+         auto disc = std::make_unique<kernel::Disc>();
+         std::string error;
+-        if (!disc->Open(forced, error)) {
++        if (!forced || !*forced) forced = "selected game image";
++        bool opened = false;
++#ifndef _WIN32
++        if (descriptor && *descriptor) {
++            char* end = nullptr;
++            errno = 0;
++            const long fd = std::strtol(descriptor, &end, 10);
++            if (errno || !end || *end || fd < 0 || fd > INT_MAX) {
++                LOGE("game: invalid selected image descriptor");
++                return false;
++            }
++            opened = disc->OpenFd(int(fd), forced, error);
++        } else
++#endif
++            opened = disc->Open(forced, error);
++        if (!opened) {
+             LOGE("game: %s: %s", forced, error.c_str());
+             return false;
+         }
+@@ -106,7 +137,7 @@
+         }
+         game = {assets, std::move(xbe)};
+         kernel::MountDisc(std::move(disc));
+-        LOGR("Game: %s from %s via XBE_DISC_IMAGE", IMAGE_XBE, forced);
++        LOGR("Game: %s from %s via %s", IMAGE_XBE, forced, descriptor && *descriptor ? "XBE_DISC_FD" : "XBE_DISC_IMAGE");
+         return true;
+     }
+ 
+diff --git a/tests/test_iso.cpp b/tests/test_iso.cpp
+--- a/tests/test_iso.cpp
++++ b/tests/test_iso.cpp
+@@ -1,6 +1,7 @@
+ // a rip kept as an Xbox disc image: the build's iso_extract takes default.xbe, or every file, out of it, from an xiso
+ // and from a whole disc dump (the game partition 0x18300000 in), files in folders included
+ #include <unistd.h>
++#include <fcntl.h>
+ 
+ #include <cstdint>
+ #include <cstdio>
+@@ -87,6 +88,66 @@
+     }
+ }
+ 
++TEST("iso: a borrowed document descriptor stays readable after its owner closes it") {
++    const auto xbe = Xbe();
++    const auto image = MakeImage(0, false, xbe);
++    const int fd = open(image.c_str(), O_RDONLY);
++    CHECK(fd >= 0);
++    kernel::Disc disc;
++    std::string error;
++    CHECK_MSG(disc.OpenFd(fd, "selected SD card image", error), error);
++    CHECK(fcntl(fd, F_GETFD) != -1);  // the caller still owns the supplied descriptor
++    close(fd);
++    std::filesystem::remove(image);  // the path can no longer be reopened
++    std::vector<uint8_t> got;
++    CHECK(disc.Load("DEFAULT.XBE", got));
++    CHECK(got == xbe);
++    kernel::Disc invalid;
++    CHECK(!invalid.OpenFd(-1, "invalid descriptor", error));
++}
++
++TEST("documents: nested game files use bounded owned descriptors and positioned reads") {
++    auto path = std::filesystem::temp_directory_path() / ("tree_test_" + std::to_string(getpid()));
++    const auto data = Xbe();
++    { std::ofstream file(path, std::ios::binary); file.write(reinterpret_cast<const char*>(data.data()), data.size()); }
++    std::vector<int> opened;
++    {
++        kernel::Disc disc;
++        kernel::Disc::Entry root{"", 0, 0, true, {}};
++        kernel::Disc::Entry folder{"DATA", 0, 0, true, {}};
++        for (uint64_t i = 0; i < 70; ++i)
++            folder.children.push_back({std::to_string(i) + ".bin", i, uint32_t(data.size()), false, {}});
++        root.children.push_back(std::move(folder));
++        std::string error;
++        CHECK_MSG(disc.OpenTree(std::move(root), [&](uint64_t) {
++            int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
++            opened.push_back(fd); return fd;
++        }, "SD game folder", error), error);
++        for (int i = 0; i < 70; ++i) {
++            auto* entry = disc.Find("data\\" + std::to_string(i) + ".bin");
++            CHECK(entry != nullptr);
++            uint8_t got[16]{};
++            CHECK_EQ(disc.Read(*entry, data.size() - 8, got, sizeof got), 8u);
++            CHECK(std::memcmp(got, data.data() + data.size() - 8, 8) == 0);
++            CHECK_EQ(disc.Read(*entry, data.size(), got, sizeof got), 0u);
++        }
++        // Descriptor numbers can be reused after eviction. Count live handles
++        // through /proc instead of assuming an old numeric FD stays closed.
++        size_t live = 0;
++        for (auto& item : std::filesystem::directory_iterator("/proc/self/fd")) {
++            std::error_code ec;
++            if (std::filesystem::read_symlink(item.path(), ec) == path) ++live;
++        }
++        CHECK_EQ(live, size_t(64));
++        std::vector<uint8_t> got;
++        CHECK(disc.Load("DATA\\0.bin", got)); // reopen an evicted document
++        CHECK(got == data);
++        CHECK(disc.Find("DATA\\..\\data\\0.BIN") != nullptr);
++    }
++    for (int fd : opened) CHECK(fcntl(fd, F_GETFD) == -1);
++    std::filesystem::remove(path);
++}
++
+ TEST("iso: iso_extract writes the named file, in a folder too, and fails on one that is missing") {
+     std::vector<uint8_t> xbe = Xbe();
+     auto image = MakeImage(0x18300000, true, xbe);

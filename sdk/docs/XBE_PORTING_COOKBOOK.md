@@ -1,0 +1,89 @@
+# Xbox XBE Recomp Porting Cookbook
+
+A repeatable, evidence-led workflow for converting another original Xbox title with Xbox XBE Recomp. This covers the x86 XBE and Direct3D 8 SDK in `/home/jon/XboxXBE-Recomp`; Xbox 360 Xenon/PPC ports use a different toolchain and are out of scope.
+
+The goal for each title is a reproducible local build from the owner's game files, with no retail files or generated game code in the repository. Treat a port as a sequence of gates: identify the exact executable, translate it correctly, bring up the guest/runtime, then prove graphics, audio, input, saves, and packaging independently.
+
+## Start a new port
+
+1. Copy `templates/game` into a new game repository. Add the SDK as `sdk/` (copy or submodule), set the title, XBE and executable names in the build scripts, and add one `add_xbe_image(...)` entry for each XBE the title uses.
+2. Keep the user's XBE, disc image, extracted files, keys, generated C++, objects and executable out of version control. Build from the user's local `assets/` directory. Check `.gitignore` before the first build and before every commit.
+3. Run `xbe_symbols` on the exact `default.xbe`. Record title identity and hashes locally. Confirm the reported XDK build and select its matching `sdk/xdk/<build>/signatures.toml` and `layout.toml`. Stop if the SDK build has no layout; do not borrow a different build's offsets.
+4. Review every unresolved or ambiguous XDK symbol. A zero address is a trapping stub, not a successful match. Use another owned title or known SDK copy to improve signatures, then regenerate. Keep game-specific hooks in `src/game`; never patch generated files as the durable fix.
+5. Build and run the headless harness before diagnosing windowing or GPU output. This separates CPU translation, imports, kernel behavior and game-data setup from the host renderer.
+6. Reach clean code generation: inspect function boundaries, jump-table targets, exception handling and unsupported instructions. Add only evidence-backed function/data/switch overrides to the title config. Rebuild after changing a gate input; stale generated output can make a failed build look successful.
+7. Bring up in bounded steps: entry point, first guest calls, file access, first present, stable menu, then interactive gameplay. Record the last useful guest call, frame count and failure class for each run.
+8. Validate each user-facing system: controller mapping and hotplug, audio signal and continuity, save/reload, display modes, graceful exit, and any secondary XBE/image transition.
+9. Before calling the port complete, verify the intended executable, run from both extracted files and the supported disc/package form where applicable, and check the repository for accidental game content or build products.
+
+## XDK builds with no SDK signatures
+
+`xbe_symbols` stops with "no signatures for these library builds" when `xdk/<build>/signatures.toml` is missing. The shipped SDK has signatures for 5849 only, and layouts for 5849 and 4721. Use this order:
+
+1. **Owned titles first.** Run `xbe_symbols` without `--out` on each owned `default.xbe` to read its library builds. Only a complete config for the same build can produce signatures; do not reuse another build's layout.
+2. **Public sources.** Searched on GitHub for 4531 data and found none: upstream `TGP482/XboxXBE-Recomp`, the `Maslin0/XboxXBERecomp` fork (`dsteal`), `crazyriddler/FinestHourRemastered`, `TGP482/SCDA-XBERecomp`, `abilliontokens/urbz-recomp`, `parkerallan/doa3-recomp`, `gamboozino/ngbrecomp` and `nworkers/reJSRF` all ship only 5849 or none. `PatrickvL/DxbxOlderSvnImport` has 4531 XBE dumps but no signature or layout data. Re-check before relying on this list. Also search by title: the games in the Dxbx dumps on 1.0.4531 (Silent Hill 2, Morrowind, Enclave, Hitman 2: Silent Assassin, Crazy Taxi 3, Conflict: Desert Storm) have no Xbox recomp port on GitHub, only PC mods. Other Xbox recomp projects (`nemonicicon/ts3FPrecomp`, `Maslin0/DoubleSteal-XBERecomp`, `AsukaNeo/Exonerated`, `FridiNaTor1/FullSpectrumWarriorTHXBOX`) use XbSymbolDatabase for their XDK addresses and have no 4531 layout.
+3. **XbSymbolDatabase addresses.** `Cxbx-Reloaded/XbSymbolDatabase` (MIT) has OOVPA tables per XDK build, including `OOVPADatabase/D3D8/4531.inl`. Build its CLI, then:
+
+   ```
+   XbSymbolDatabaseCLI assets/default.xbe > found.txt
+   python3 sdk/tools/symbols/xbsdb_import.py found.txt <sdk> config/game.toml
+   ```
+
+   The importer fills `[symbols]` and `[data]` only. It does not write `[xbe]`, so write that by hand from the XBE header (title ID at the certificate's +0x8, entry point XOR the retail key `0xA8FC57AB`, executable sections by flag bit `0x4`) and leave `xdk =` out until a layout exists. Its output is addresses, not proof: review every zero (trapping stub), every ambiguous match and every duplicate OOVPA warning in the XBE's code.
+4. **Layout is not imported.** `xdk/<build>/layout.toml` holds struct offsets that must be proven from the target's code, as the 5849 file was. Method used for 4531 (`xdk/4531/layout.toml`, partial):
+   - Take the XbSymbolDatabase addresses for the D3D functions that touch the device (SetTexture, SetRenderTarget, SetViewport, SetTransform, SetScreenSpaceOffset, BlockUntilVerticalBlank, Swap, SetPixelShader, SetVertexShader).
+   - Disassemble each one and read the `[reg+disp]` accesses to the device pointer. A store of a shader or surface handle, a compare against a neighbouring field, or a copy of 16 dwords with a `type*64` index each identify a field.
+   - Cross-check with the same field in a second build's layout (4721 and 5849) to catch layout drift. Do not copy a value that the target's code does not show.
+   - Record each key with the instruction address. Leave unproven keys out; the runtime traps on them where they are first needed.
+   Until a layout covers the draw path, treat graphics as blocked.
+5. **Trying another build's signatures** is only a diagnostic. Copying 5849 signatures to a 4531 folder matched 45 of 238 functions for Splashdown (XDK 4531), several only by weak constants. Do not commit that as a signature set.
+
+Record the build, the importer counts and the open zeros in `PORT_STATUS.md`.
+
+## Graphics diagnosis
+
+When a frame is wrong, capture it and the draw/state evidence before changing the renderer. Keep a known-good frame and a short repeatable route. Change one state at a time and compare the same scene or the same submitted draw list. Do not use a clean boot, a working menu, or a high frame rate as proof that gameplay rendering is correct.
+
+Use this order:
+
+1. Confirm the guest issued the expected draw and selected the expected render target. If it did not, trace the title/game hook, resources and guest state before changing the backend.
+2. Check target dimensions, viewport, scissor, screen-space offset, render-target transitions, depth/stencil state and texture formats against the guest values.
+3. Inspect the translated vertex/pixel shader inputs and outputs, including constants and vertex layout. Verify coordinates before applying a global shift, flip or scale.
+4. Compare the host result with the SDK CPU/reference renderer or a known-good capture when available. Reduce the failing case to a small draw/state sequence.
+5. Make the narrowest fix at the layer that diverges, preserve the capture as a regression case, and recheck another title using that shared path.
+
+For Android/Vulkan, treat surface orientation as an explicit transform. Keep the platform's supported swapchain transform when required by the driver, then rotate the final game image in the presentation blit. Rotate the host settings UI consistently. Test on the physical GPU: an identity transform or clear path that appears valid in code may still fail in the device driver.
+
+Do not “fix” clipped text by moving every label until vertex positions, viewport/scissor and screen-space offsets have been captured. Pause menus, standings tables and HUD often share a text path; a shared coordinate bug should be fixed once at its producer or transform.
+
+## Lessons from the five current ports
+
+These are observations to carry forward, not claims that every port is finished:
+
+- **BLACK:** the Linux/Vulkan port documents a renderer mapping with negative-height Vulkan viewports to preserve D3D's vertical convention and winding. Keep a cross-backend or CPU-reference comparison in the graphics workflow; matching API names does not guarantee matching pixels. Its Linux build also needs the shader compiler library beside the executable.
+- **Burnout 3:** keep title hooks and runtime changes separate. A title-specific behavior belongs in `src/game`; a reusable XDK or renderer correction belongs in the SDK and should be checked against other ports before it is copied downstream.
+- **Links 2004:** keep local game staging independent from source and build output. Confirm the selected disc/extracted data before debugging a loader or graphics failure; do not remove large staging assets as routine cleanup without checking their owner.
+- **Need for Speed: Hot Pursuit 2:** on the Retroid/Adreno Android build, a clear-only legacy Vulkan render pass crashed at command-buffer end. Full-surface clears now use transfer clear commands. The device also required retaining its current swapchain transform and rotating the final blit; requesting identity caused another driver crash. Test transforms and clears on hardware, and preserve a screenshot/capture for orientation checks. The Xbox-labelled Retroid pad already exposes SDL mappings for both sticks, triggers, shoulders, face buttons and stick clicks; reserve R3 for the host settings menu only when that is the intended control contract. Original pause and standings text alignment remains an open graphics issue and must not be marked fixed until captured and verified.
+- **Project Gotham Racing (PGR):** graphics remain an explicit bring-up gate. The port README's graphics section is blank, so do not infer rendering support from successful compilation or generic SDK claims. Establish a first stable frame, verify the 3D scene and UI independently, and keep missing or distorted content on the port's open-issues list until device/gameplay evidence closes it.
+
+Across the ports, distinguish three cases before editing graphics code: the title did not issue the draw; the guest draw/state is wrong; or the host translation/presentation differs from the guest. Captures should let the next person repeat that distinction without rediscovering it.
+
+## Runtime and SDK changes
+
+- Put reusable fixes in the canonical SDK, then synchronize each port's vendored `sdk/` copy with the supported sync workflow. Record deliberate per-port divergences so a sync cannot silently erase them.
+- Rebuild every affected port after a shared change. A successful compile proves only that it links; run the affected title far enough to exercise the changed path.
+- Preserve title-specific behavior in hooks/config instead of adding title-ID branches to common kernel or renderer code unless multiple titles demonstrate a shared contract.
+- Add a focused regression at the lowest layer that reproduces the failure. Keep at least one title-level smoke route for the behavior that the unit case cannot cover.
+- Keep diagnostic switches narrow and reversible. Capture a baseline, change one variable, collect evidence, then remove or disable temporary instrumentation before release.
+
+## Completion record for each conversion
+
+Keep a concise `PORT_STATUS.md` with:
+
+- XBE title ID, XDK build, entry point, local file hashes, and supported input layout;
+- build command and required local assets/tools;
+- current gate and evidence for CPU, kernel, graphics, audio, input, persistence and packaging;
+- known issues, each with a reproduction route and the next discriminating check;
+- shared SDK changes and which other ports were rebuilt or checked.
+
+Use precise states such as **builds**, **boots**, **presents**, **renders menu**, **renders gameplay**, and **playable**. Do not collapse them into “working.” A port is ready for the next conversion when its recipe is reproducible from clean generated output, its open graphics and audio issues are stated, and its local-only game data stays out of the deliverable.

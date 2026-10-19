@@ -1,0 +1,4 @@
+-std=c++20
+-xc++
+-Iruntime
+-Iruntime/platform/compat

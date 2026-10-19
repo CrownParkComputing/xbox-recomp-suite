@@ -1,0 +1,1046 @@
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -2186,6 +2186,7 @@
+     FillCombinerConstants(s, c);
+     if (ext_) ext_->Constants(reinterpret_cast<float(*)[4]>(vc.cpu), c.ext, bound_rt_, k.blend ? k.src : 1);
+     FillTextureConstants(s, stages, c);
++    FillPointConstants(s, c);
+     if (sh.fixed_transform) {
+         FillTransformConstants(s, size, c);
+         FillLightConstants(s, sh.fk, c);
+--- a/runtime/gpu/shaders.cpp
++++ b/runtime/gpu/shaders.cpp
+@@ -6,6 +6,7 @@
+ #include <cstdarg>
+ #include <cstdio>
+ #include <cstring>
++#include <cmath>
+ 
+ namespace gpu {
+ 
+@@ -32,6 +33,7 @@
+     float4 tc2 : TEXCOORD2;
+     float4 tc3 : TEXCOORD3;
+     float fogamt : TEXCOORD4;
++    float psize : TEXCOORD6;
+ };
+ cbuffer VC : register(b0) { float4 c[192]; };
+ cbuffer DC : register(b1) {
+@@ -53,6 +55,7 @@
+     float4 mat[5];
+     float4 amb;
+     float4 lt[56];
++    float4 pointParams;
+ };
+ )";
+ 
+@@ -240,6 +243,7 @@
+     o.tc2 = oT2;
+     o.tc3 = oT3;
+     o.fogamt = fogfactor(oFog.x);
++    o.psize = oPts.x;
+     return o;
+ }
+ )";
+@@ -249,7 +253,7 @@
+     // precise: EQUAL depth passes need bit exact positions
+     precise float4 R0 = 0, R1 = 0, R2 = 0, R3 = 0, R4 = 0, R5 = 0, R6 = 0, R7 = 0, R8 = 0, R9 = 0, R10 = 0, R11 = 0;
+     precise float4 oPos = 0;
+-    float4 oD0 = float4(0, 0, 0, 1), oD1 = 0, oB0 = float4(0, 0, 0, 1), oB1 = 0, oFog = 0, oPts = 1;
++    float4 oD0 = float4(0, 0, 0, 1), oD1 = 0, oB0 = float4(0, 0, 0, 1), oB1 = 0, oFog = 0, oPts = pointParams.x;
+     float4 oT0 = float4(0, 0, 0, 1), oT1 = float4(0, 0, 0, 1), oT2 = float4(0, 0, 0, 1), oT3 = float4(0, 0, 0, 1);
+ )";
+ 
+@@ -579,6 +583,7 @@
+     }
+     k.flat = s.simple[kMShadeMode >> 2] == 0x1D00;  // D3DSHADE_FLAT
+     k.two_sided = s.rs[kRsTwoSidedLighting] != 0;
++    k.wbuffer = s.rs[kRsZEnable] == 2;
+     if (s.ps) {
+         const uint32_t* d = s.ps->def;
+         k.programmable = 1;
+@@ -788,6 +793,7 @@
+     o.tc2 = oT2;
+     o.tc3 = oT3;
+     o.fogamt = fogfactor(abs(cp.z));
++    o.psize = oPts.x;
+     return o;
+ }
+ )";
+@@ -802,7 +808,12 @@
+         const char* type = t.shadow ? "Texture2D<float>" : t.kind == kTex3D ? "Texture3D" : t.kind == kTexCube ? "TextureCube" : "Texture2D";
+         s += F("%s tex%d : register(t%d);\n%s smp%d : register(s%d);\n", type, i, i, t.shadow ? "SamplerComparisonState" : "SamplerState", i, i);
+     }
+-    s += F("float4 main(VOut i, bool front : SV_IsFrontFace) : SV_Target {\n");
++    if (k.wbuffer) {
++        s += "struct POut { float4 color : SV_Target; float depth : SV_Depth; };\n";
++        s += "POut main(VOut i, bool front : SV_IsFrontFace) {\n";
++    } else {
++        s += "float4 main(VOut i, bool front : SV_IsFrontFace) : SV_Target {\n";
++    }
+     s += "    float4 tc0 = i.tc0, tc1 = i.tc1, tc2 = i.tc2, tc3 = i.tc3;\n";
+     s += k.two_sided ? "    float4 v0 = front ? i.d0 : i.b0, v1 = front ? i.d1 : i.b1;\n" : "    float4 v0 = i.d0, v1 = i.d1;\n";
+     s += "    if (misc.w == 0) v1 = float4(0, 0, 0, 1);\n";
+@@ -875,7 +886,14 @@
+         body += "cur.rgb = saturate(cur.rgb + v1.rgb);\n";
+         body += "float4 outc = float4(lerp(fogin.rgb, cur.rgb, fogin.a), cur.a);\n";
+     }
+-    body += "alphatest(outc.a);\n" + Hooks().Output() + "return outc;\n}\n";
++    body += "alphatest(outc.a);\n" + Hooks().Output();
++    if (k.wbuffer) {
++        // DXC uses Direct3D position W (including -fvk-use-dx-position-w).
++        // Xbox W-buffer values use the depth surface's integer range.
++        body += "POut o; o.color = outc; o.depth = saturate(i.pos.w * surf.z); return o;\n}\n";
++    } else {
++        body += "return outc;\n}\n";
++    }
+     s += body;
+     return k.quad ? QuadHlsl(std::move(s)) : s;
+ }
+@@ -890,7 +908,9 @@
+     sub("    if (surf.w == 0 && abs(p.x - (surf.x - 0.5)) < 1e-3) p.x = surf.x;\n", "    o.e.xy = p.xy;\n", "");
+     sub("    if (surf.w == 0 && abs(p.y - (surf.y - 0.5)) < 1e-3) p.y = surf.y;\n", "", "    o.e.zw = p.xy;\n");
+     sub("    o.pos = cp;\n", "    o.e = float4(sp, (float2(cp.x, -cp.y) / cp.w + 1) * 0.5 * surf.xy);\n", "");
+-    sub("float4 main(VOut i, bool front", R"(float4 unstretch(float4 t, float4 e) {
++    const char* entry = s.find("POut main(VOut i, bool front") != std::string::npos
++                            ? "POut main(VOut i, bool front" : "float4 main(VOut i, bool front";
++    sub(entry, R"(float4 unstretch(float4 t, float4 e) {
+     float2 d = e.zw - e.xy, g = float2(ddx(e.x), ddy(e.y));
+     return t + (d.x ? d.x / g.x * ddx(t) : 0) + (d.y ? d.y / g.y * ddy(t) : 0);
+ }
+@@ -899,18 +919,32 @@
+     return s;
+ }
+ 
+-// a point covers its console pixel, several host pixels on an upscaled target: drawn as a quad of that size
++void FillPointConstants(const State& s, DrawConstants& c) {
++    auto value = [&](uint32_t state) { return std::bit_cast<float>(s.rs[state]); };
++    const float size = value(kRsPointSize), minimum = value(kRsPointSizeMin), maximum = value(kRsPointSizeMax);
++    c.point[0] = std::isfinite(size) && size > 0 ? size : 1;
++    c.point[1] = std::isfinite(minimum) ? std::clamp(minimum, 0.0f, 64.0f) : 0;
++    c.point[2] = std::isfinite(maximum) && maximum > 0 ? std::clamp(maximum, c.point[1], 64.0f) : 64;
++    c.point[3] = float((s.rs[kRsPointSpriteEnable] ? 1 : 0) | (s.rs[kRsPointScaleEnable] ? 2 : 0));
++}
++
++// Expand points using the programmed pixel size. NV2A point sprites replace
++// texture stage 3's coordinates; the other texture coordinates stay intact.
+ std::string PointHlsl() {
+     return Common() + R"(
+ [maxvertexcount(4)]
+ void main(point VOut v[1], inout TriangleStream<VOut> strip) {
+-    float2 half_pixel = v[0].pos.w / surf.xy;  // in clip units, the target spans 2 across surf.xy pixels
++    float2 half_pixel = v[0].pos.w / surf.xy;
++    float size = clamp((uint(pointParams.w) & 2) ? v[0].psize : pointParams.x, pointParams.y, pointParams.z);
++    bool sprite = (uint(pointParams.w) & 1) != 0;
++    float2 radius = size * half_pixel;
+     // a target is read half a host pixel back (surf.w host pixels per console pixel): left and top reach that far
+-    float2 back = (0.5 - 1e-3) * 2 * half_pixel / surf.w;
++    float2 back = size <= 1 && !sprite ? (0.5 - 1e-3) * 2 * half_pixel / surf.w : 0;
+     for (int i = 0; i < 4; i++) {
+         VOut o = v[0];
+-        o.pos.x += (i & 1) ? half_pixel.x : -half_pixel.x - back.x;
+-        o.pos.y += (i & 2) ? -half_pixel.y : half_pixel.y + back.y;
++        o.pos.x += (i & 1) ? radius.x : -radius.x - back.x;
++        o.pos.y += (i & 2) ? -radius.y : radius.y + back.y;
++        if (sprite) o.tc3 = float4((i & 1) ? 1 : 0, (i & 2) ? 1 : 0, 1, 1);
+         strip.Append(o);
+     }
+ }
+--- a/runtime/gpu/shaders.h
++++ b/runtime/gpu/shaders.h
+@@ -32,6 +32,7 @@
+     uint32_t flat = 0, two_sided = 0;
+     uint32_t proj = 0;       // fixed function: bit per stage sampled at coordinates divided by w
+     uint32_t quad = 0;       // a screen quad: QuadHlsl
++    uint32_t wbuffer = 0;    // D3DZB_USEW: store interpolated clip W instead of Z
+     bool operator==(const PixelKey& o) const;
+ };
+ 
+@@ -96,6 +97,9 @@
+     float mat[5][4];     // material diffuse, ambient, specular, emissive, power
+     float amb[4];        // D3DRS_AMBIENT
+     float lt[8][7][4];   // per light: diffuse, specular, ambient, position range, direction falloff, attenuation, cos theta/2 phi/2
++    float point[4];     // size, minimum, maximum, flags: sprite coordinates and vertex-program size
+ };
+ 
++void FillPointConstants(const State& s, DrawConstants& c);
++
+ }  // namespace gpu
+--- a/runtime/gpu/vulkan.cpp
++++ b/runtime/gpu/vulkan.cpp
+@@ -1045,7 +1045,8 @@
+     if (!CreateTargetResource(t)) return nullptr;
+     g_perf.targets++;
+     t.data = slot.data;
+-    t.bytes = depth ? slot.gw * slot.gh * 4 : GuestPitch(slot.gw) * slot.gh;
++    Describe(s.header, t.guest);
++    t.bytes = depth && t.guest.linear ? t.guest.pitch * slot.gh : GuestPitch(slot.gw) * slot.gh;
+     t.epoch = DirtyEpoch(slot.data);
+     t.sig = MemSig(slot.data, t.bytes);
+     Target& ref = targets_[slot.key];
+@@ -1680,6 +1681,10 @@
+     FillFogConstants(s, sh.prog, c);
+     FillCombinerConstants(s, c);
+     FillTextureConstants(s, stages, c);
++    FillPointConstants(s, c);
++    if (k.topo == uint32_t(Topology::Points))
++        LOG_FIRST(4, "vulkan: points size %.3f range %.3f..%.3f sprite %u scale %u", c.point[0], c.point[1], c.point[2],
++                  s.rs[kRsPointSpriteEnable], s.rs[kRsPointScaleEnable]);
+     if (sh.fixed_transform) {
+         FillTransformConstants(s, size, c);
+         FillLightConstants(s, sh.fk, c);
+@@ -1746,6 +1751,7 @@
+     g_perf.draws++;
+     if (cap_) CapStep(s.rt);
+     if (DepthCopy(s)) return;
++    SyncVertexTargets(s);
+     Assembled& a = asm_;
+     if (!AssembleDraw(s, prim, start, count, indices, a)) return;
+     // past the ring every upload is a buffer of its own: seconds lost on a frame that draws a whole level once
+--- a/runtime/gpu/vulkan.h
++++ b/runtime/gpu/vulkan.h
+@@ -66,6 +66,7 @@
+     bool depth = false;
+     uint32_t gw = 0, gh = 0, w = 0, h = 0;  // console size, host size
+     uint32_t data = 0, bytes = 0;
++    TextureDesc guest;
+     uint64_t epoch = 0, sig = 0;  // last lock seen, guest memory as last matched
+     bool drawn = false;           // the GPU wrote it since the last readback
+     std::vector<uint8_t> read;    // what Sync left in guest memory
+@@ -330,6 +331,8 @@
+     CopySource PrepareCopySource(Target& t, const ShrinkOptions& o);
+     ImageRef Shrink(Image& src, uint32_t w, uint32_t h, const ShrinkOptions& o = {});
+     bool ReadBack(Image& res, uint32_t w, uint32_t h, std::vector<uint8_t>& out);
++    void SyncVertexTargets(const State& s);
++    void SyncDepthTarget(Target& t);
+     void ResetLate(Late& l, const Target& t);
+     Image* PrepareLateSource(Target& t, Late& l);
+     void RecordLateCopy(Late& l, uint32_t slot, Image& src);
+--- a/runtime/gpu/vulkan_readback.cpp
++++ b/runtime/gpu/vulkan_readback.cpp
+@@ -4,6 +4,7 @@
+ #include <chrono>
+ #include <cstring>
+ #include <ctime>
++#include <cmath>
+ 
+ #include "app/app.h"
+ #include "core/diag.h"
+@@ -57,6 +58,79 @@
+     rb->Invalidate();
+     out.assign(rb->map, rb->map + size_t(w) * h * 4);
+     return true;
++}
++
++// Xbox render targets can be rebound as vertex buffers without a CPU lock.
++// Bring generated vertices into the guest bytes before the input assembler reads them.
++void VulkanRenderer::SyncVertexTargets(const State& s) {
++    VertexShader fvf;
++    const VertexShader* layout = s.vs.get();
++    if (!(s.vs_handle & 1)) {
++        FvfInputs(s.vs_handle, fvf);
++        layout = &fvf;
++    }
++    if (!layout) return;
++    uint16_t used = 0;
++    for (const auto& in : layout->inputs)
++        if (in.stream >= 0 && in.stream < 16 && in.type && in.type != 2) used |= uint16_t(1u << in.stream);
++    for (unsigned i = 0; i < 16; ++i) {
++        if (!(used & (1u << i)) || !s.streams[i].vb) continue;
++        uint32_t data = mem::VirtualFromPhysical(kernel::R32(s.streams[i].vb + 4));
++        if (TargetStale(data)) continue;
++        for (auto& [key, t] : targets_) {
++            if (t.data != data || !t.drawn) continue;
++            if (t.depth) SyncDepthTarget(t);
++            else Sync(data, 0);
++        }
++    }
++}
++
++void VulkanRenderer::SyncDepthTarget(Target& t) {
++    // Integer depth/stencil has a different byte order from Vulkan's separate
++    // depth and stencil copies. Preserve those bytes for UBYTE4 vertex inputs.
++    const bool d16 = t.guest.format == 0x30;
++    if (!t.guest.linear || (!d16 && t.guest.format != 0x2E)) return;
++    const uint64_t pixels = uint64_t(t.w) * t.h;
++    BufferRef rb = ctx_.CreateBuffer(pixels * 5, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Memory::Readback);
++    if (!rb) return;
++    Barrier(*t.res, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
++    VkBufferImageCopy c{};
++    c.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
++    c.imageExtent = {t.w, t.h, 1};
++    vkCmdCopyImageToBuffer(Cb(), t.res->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb->buffer, 1, &c);
++    if (!d16) {
++        c.bufferOffset = pixels * 4;
++        c.imageSubresource.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
++        vkCmdCopyImageToBuffer(Cb(), t.res->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb->buffer, 1, &c);
++    }
++    Flush();
++    rb->Invalidate();
++    for (uint32_t y = 0; y < t.gh; ++y) {
++        // Pick the centre host sample when rendering above the console resolution.
++        uint32_t hy = std::min(uint32_t((uint64_t(y) * 2 + 1) * t.h / (t.gh * 2)), t.h - 1);
++        auto* row = static_cast<uint8_t*>(kernel::HostPtr(t.data + y * t.guest.pitch));
++        for (uint32_t x = 0; x < t.gw; ++x) {
++            uint32_t hx = std::min(uint32_t((uint64_t(x) * 2 + 1) * t.w / (t.gw * 2)), t.w - 1);
++            uint64_t sample = uint64_t(hy) * t.w + hx;
++            uint32_t depth;
++            std::memcpy(&depth, rb->map + sample * 4, 4);
++            if (t.res->desc.format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
++                float z;
++                std::memcpy(&z, &depth, 4);
++                depth = uint32_t(std::lround(std::clamp(z, 0.0f, 1.0f) * 16777215.0f));
++            }
++            if (d16) {
++                uint16_t value = uint16_t(std::lround(double(depth & 0xFFFFFF) * 65535.0 / 16777215.0));
++                std::memcpy(row + x * 2, &value, 2);
++            } else {
++                uint32_t value = (depth << 8) | rb->map[pixels * 4 + sample];
++                std::memcpy(row + x * 4, &value, 4);
++            }
++        }
++    }
++    t.drawn = false;
++    t.epoch = DirtyEpoch(t.data);
++    t.sig = MemSig(t.data, t.bytes);
+ }
+ 
+ // the CPU reads a surface the GPU drew: bring the pixels back
+--- a/runtime/xdk/d3d8.cpp
++++ b/runtime/xdk/d3d8.cpp
+@@ -87,7 +87,9 @@
+ 
+ std::unordered_map<uint32_t, std::shared_ptr<gpu::VertexShader>> g_vs;
+ std::unordered_map<uint32_t, std::shared_ptr<gpu::PixelShader>> g_ps;
+-std::shared_ptr<gpu::VertexShader> g_direct_vs_program;
++std::unordered_map<uint32_t, std::shared_ptr<gpu::VertexShader>> g_direct_vs_programs;
++uint32_t g_direct_vs_address = 0;
++bool g_direct_vs_active = false;
+ std::array<uint32_t, 3> g_buffers{};  // front, back surfaces
+ uint32_t g_buffer_count = 2;
+ uint32_t g_depth = 0;
+@@ -99,6 +101,27 @@
+ 
+ uint32_t Dev(uint32_t off) { return R32(kDevice + off); }
+ void SetDev(uint32_t off, uint32_t v) { W32(kDevice + off, v); }
++
++// Recompiled Reset rebuilds the device's surfaces without going through CreateDevice.
++// Follow its pointer table before using the swap chain, including changes in buffer count.
++// The table is back, front, then additional back buffers; g_buffers is front first.
++void SyncPresentationBuffers() {
++    if constexpr (!XDK_CDevice_EmbeddedBuffers && XDK_CDevice_BufferCount != xdk::kUnknown) {
++        const uint32_t count = Dev(XDK_CDevice_BufferCount);
++        if (count < 2 || count > g_buffers.size()) return;
++        std::array<uint32_t, 3> buffers{};
++        buffers[0] = Dev(kDevFrontBuffer);
++        buffers[1] = Dev(kDevBackBuffer);
++        for (uint32_t i = 2; i < count; ++i) buffers[i] = Dev(kDevBackBuffer + i * 4);
++        for (uint32_t i = 0; i < count; ++i)
++            if (!buffers[i]) return;
++        if (buffers != g_buffers || count != g_buffer_count) {
++            LOG_FIRST(8, "d3d: reset swap chain: %u surfaces, back %08X front %08X", count, buffers[1], buffers[0]);
++            g_buffers = buffers;
++            g_buffer_count = count;
++        }
++    }
++}
+ 
+ // the device's current shader object, as the library's SetVertexShader keeps it and its inlined code reads it (a
+ // programmable shader's record, else the fixed function one): never null, the library reads through it
+@@ -261,6 +284,13 @@
+ // Translate the 3925 guest table into the renderer's 5849 state indices.
+ // The complex table was verified against PGR's dispatch table at 000F4DD8.
+ constexpr uint32_t CanonicalRenderState(uint32_t rs) {
++    if (XDK_RenderState_4531) {
++        if (rs < 83) return rs;
++        if (rs < 118) return rs + 9;
++        if (rs <= 139) return rs + 18;
++        if (rs <= 146) return rs + 19; // no SampleAlpha in the 4531 dispatch table
++        return gpu::kRsMax;
++    }
+     if (!XDK_RenderState_3925 || rs < 82) return rs;
+     if (rs < 116) return rs + 10;
+     if (rs <= 133) return rs + 20;
+@@ -270,6 +300,11 @@
+     return gpu::kRsMax;
+ }
+ constexpr uint32_t GuestRenderState(uint32_t rs) {
++    if (XDK_RenderState_4531) {
++        for (uint32_t old = 83; old < 147; ++old)
++            if (CanonicalRenderState(old) == rs) return old;
++        return gpu::kRsMax;
++    }
+     if (!XDK_RenderState_3925) return rs;
+     for (uint32_t old = 82; old < 144; ++old)
+         if (CanonicalRenderState(old) == rs) return old;
+@@ -461,7 +496,11 @@
+     SetDev(kDevDepth, g_depth);
+     if constexpr (!XDK_CDevice_EmbeddedBuffers) {
+         SetDev(kDevBackBuffer, g_buffers[1]);
+-        SetDev(kDevFrontBuffer, g_buffers[1]);
++        SetDev(kDevFrontBuffer, g_buffers[0]);
++        if constexpr (XDK_CDevice_BufferCount != xdk::kUnknown) {
++            SetDev(XDK_CDevice_BufferCount, g_buffer_count);
++            for (uint32_t i = 2; i < g_buffer_count; ++i) SetDev(kDevBackBuffer + i * 4, g_buffers[i]);
++        }
+     }
+     float one = 1.0f, zs = g_depth && (R32(g_depth + 12) >> 8 & 0xFF) == 0x30 ? 65535.0f : 16777215.0f;
+     std::memcpy(HostPtr(kDevice + kDevSuperX), &one, 4);
+@@ -616,6 +655,7 @@
+ // fade from it at its first frames
+ HLE_STDCALL(D3DDevice_PersistDisplay, 0) {
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
++    SyncPresentationBuffers();
+     uint32_t front = g_buffers[0], size = R32(front + 0x10);
+     uint32_t pitch = ((size >> 24 & 0xFF) + 1) * 64, height = (size >> 12 & 0xFFF) + 1, bytes = pitch * height;
+     uint32_t data = mem::VirtualFromPhysical(R32(front + 4));
+@@ -668,6 +708,8 @@
+ }
+ 
+ HLE_STDCALL(D3DDevice_GetBackBuffer2, 1) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    SyncPresentationBuffers();
+     int32_t i = int32_t(a[0]);
+     uint32_t s = i < 0 ? g_buffers[0] : g_buffers[std::min<uint32_t>(uint32_t(i) + 1, g_buffer_count - 1)];
+     W32(s, R32(s) + 1);
+@@ -714,6 +756,7 @@
+         }
+     }
+     Walk(Dev(kDevPush));  // reports asked for at the end of the frame
++    SyncPresentationBuffers();
+     gpu::Surface presented = SurfaceOf(g_buffers[1]);
+     if (g_movie_frame.data) {
+         if (g_movie_frame.age++ > 4) {
+@@ -726,6 +769,10 @@
+                 const uint32_t bytes = std::min({g_movie_frame.width * 4, g_movie_frame.pitch,
+                                                  desc.pitch - g_movie_frame.x * 4});
+                 if (rows && bytes) {
++                    // Finish queued draws before the CPU replaces their target with the decoded movie.
++                    // Otherwise the render thread can consume this write, then clear/draw over it
++                    // before Present gets a chance to upload the movie pixels.
++                    if (g_backend) g_backend->Flush();
+                     const auto* src = static_cast<const uint8_t*>(HostPtr(g_movie_frame.data +
+                                                                           g_movie_frame.y * g_movie_frame.pitch +
+                                                                           g_movie_frame.x * 4));
+@@ -819,7 +866,7 @@
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
+     Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
+     uint32_t rs = a[0], v = a[1];
+-    if (rs < (XDK_RenderState_3925 ? 82u : gpu::kRsDeferredFirst)) {
++    if (rs < (XDK_RenderState_3925 ? 82u : XDK_RenderState_4531 ? 83u : gpu::kRsDeferredFirst)) {
+         uint32_t method = R32(kSimpleEncode + rs * 4) & 0x1FFC;
+         g_state.simple[method >> 2] = v;
+         W32(kRenderState + rs * 4, v);  // titles read their states back from the library's table
+@@ -1076,8 +1123,8 @@
+     Walk(Dev(kDevPush));
+     const uint32_t header = a[0] ? R32(a[0]) : 0;
+     const uint32_t instructions = header >> 16;
+-    if (!a[0] || !instructions || instructions > 64) {
+-        g_direct_vs_program.reset();
++    if (!a[0] || !instructions || a[1] >= 136 || instructions > 136 - a[1]) {
++        g_direct_vs_programs.erase(a[1]);
+         LOG_FIRST(4, "d3d: invalid vertex program %08X header %08X", a[0], header);
+         return 0;
+     }
+@@ -1085,7 +1132,23 @@
+     vs->program_type = header & 0xFFFF;
+     vs->program.reserve(instructions * 4);
+     for (uint32_t i = 0; i < instructions * 4; ++i) vs->program.push_back(R32(a[0] + 4 + i * 4));
+-    g_direct_vs_program = std::move(vs);
++    g_direct_vs_programs[a[1]] = vs;
++    // Loading microcode replaces the active program even when the title keeps
++    // its declaration bound and therefore does not call SelectVertexShader.
++    if (g_direct_vs_active && a[1] == g_direct_vs_address && g_state.vs) {
++        const auto& bound = *g_state.vs;
++        auto active = std::make_shared<gpu::VertexShader>();
++        active->handle = bound.handle;
++        active->pretransformed = bound.pretransformed;
++        active->decl = bound.decl;
++        active->inputs = bound.inputs;
++        active->stream_stride = bound.stream_stride;
++        active->constants = bound.constants;
++        active->program = vs->program;
++        active->program_type = vs->program_type;
++        // Do not copy the old hash, which the render thread may still compute.
++        g_state.vs = std::move(active);
++    }
+     return 0;
+ }
+ 
+@@ -1093,6 +1156,7 @@
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
+     Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
+     uint32_t h = a[0];
++    g_direct_vs_active = false;
+     g_state.vs_handle = h;
+     g_state.vs = nullptr;
+     StoreCurrentShader(h);
+@@ -1152,6 +1216,7 @@
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
+     Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
+     const uint32_t handle = a[0];
++    g_direct_vs_active = false;
+     if (!handle) {
+         g_state.vs_handle = 0;
+         g_state.vs.reset();
+@@ -1164,14 +1229,15 @@
+         StoreCurrentShader(handle);
+         return 0;
+     }
+-    if (!(handle & 1) || !g_direct_vs_program) {
++    auto program = g_direct_vs_programs.find(a[1]);
++    if (!(handle & 1) || program == g_direct_vs_programs.end()) {
+         LOG_FIRST(4, "d3d: SelectVertexShader %08X at %u has no loaded program", handle, a[1]);
+         return 0;
+     }
+ 
+     // SelectVertexShaderDirect stores sixteen {stream, offset, type, reserved} descriptors at
+     // (handle & ~1) + 0x14. LoadVertexShaderProgram supplies the corresponding VSH bytecode.
+-    auto vs = std::make_shared<gpu::VertexShader>(*g_direct_vs_program);
++    auto vs = std::make_shared<gpu::VertexShader>(*program->second);
+     vs->handle = handle;
+     vs->inputs.fill({});
+     vs->stream_stride.fill(0);
+@@ -1190,6 +1256,8 @@
+     }
+     g_state.vs_handle = handle;
+     g_state.vs = std::move(vs);
++    g_direct_vs_address = a[1];
++    g_direct_vs_active = true;
+     StoreCurrentShader(handle);
+     if (XDK_CDevice_VertexShader != xdk::kUnknown) SetDev(XDK_CDevice_VertexShader, handle & ~1u);
+     return 0;
+@@ -1411,6 +1479,8 @@
+ }
+ 
+ std::vector<uint32_t> g_inline;  // inline array dwords of the open primitive
++std::vector<uint16_t> g_inline_indices;  // ARRAY_ELEMENT16/32 in the open primitive
++std::vector<std::pair<uint32_t, uint32_t>> g_array_ranges;  // DRAW_ARRAYS first/count
+ 
+ // an immediate vertex attribute method into its slot of g_im_attr, the vertex taken when slot 0's last component
+ // comes; false for any other method
+@@ -1449,6 +1519,20 @@
+ 
+ // the primitive a begin opened, ended: its inline array in the bound vertex format, or its immediate vertices
+ void EndCommandPrimitive() {
++    if (!g_inline_indices.empty() || !g_array_ranges.empty()) {
++        SyncDeferred();
++        if (g_backend && g_im_prim) {
++            if (!g_inline_indices.empty())
++                g_backend->Draw(g_state, g_im_prim, 0, uint32_t(g_inline_indices.size()),
++                                reinterpret_cast<const uint8_t*>(g_inline_indices.data()));
++            for (const auto& [first, count] : g_array_ranges)
++                g_backend->Draw(g_state, g_im_prim, first, count, nullptr);
++        }
++        g_inline_indices.clear();
++        g_array_ranges.clear();
++        g_im_prim = 0;
++        return;
++    }
+     if (g_inline.empty()) {
+         EndPrimitive();
+         return;
+@@ -1486,6 +1570,8 @@
+             g_im_mask = 0;
+             g_im_vertices.clear();
+             g_inline.clear();
++            g_inline_indices.clear();
++            g_array_ranges.clear();
+         } else {
+             EndCommandPrimitive();
+         }
+@@ -1493,6 +1579,23 @@
+     }
+     if (m == kInlineArray) {
+         if (g_im_prim) g_inline.push_back(v);
++        return;
++    }
++    if (m == 0x1800 && g_im_prim) {  // ARRAY_ELEMENT16: two indices per word
++        g_inline_indices.push_back(uint16_t(v));
++        g_inline_indices.push_back(uint16_t(v >> 16));
++        return;
++    }
++    if (m == 0x1808 && g_im_prim) {  // ARRAY_ELEMENT32, also used for an odd final index
++        g_inline_indices.push_back(uint16_t(v));
++        return;
++    }
++    if (m == 0x1810 && g_im_prim) {  // DRAW_ARRAYS: 24-bit first, 8-bit count minus one
++        const uint32_t first = v & 0xFFFFFF, count = (v >> 24) + 1;
++        if (!g_array_ranges.empty() && g_array_ranges.back().first + g_array_ranges.back().second == first)
++            g_array_ranges.back().second += count;
++        else
++            g_array_ranges.emplace_back(first, count);
+         return;
+     }
+     if (ImmediateAttribute(m, v)) return;
+@@ -1529,6 +1632,45 @@
+     return 0;
+ }
+ 
++#if HAS_D3DDevice_DrawIndexedVerticesUP
++HLE_STDCALL(D3DDevice_DrawIndexedVerticesUP, 5) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    Walk(Dev(kDevPush));
++    const uint32_t count = a[1], indices = a[2], vertices = a[3], stride = a[4];
++    if (!count) return 0;
++    if (!indices || !vertices || !stride || uint64_t(count) * stride > kUpHalf) return 0x8876086C;
++    // Expand in index order into the same transient stream as DrawVerticesUP. This
++    // preserves strips/fans/quads and snapshots caller-owned vertices before returning.
++    // The guest copy routine depends on private XDK vertex-packing tables, which
++    // are bypassed when the host binds its own declarations and programs.
++    static std::vector<uint8_t> packed;
++    packed.resize(size_t(count) * stride);
++    for (uint32_t i = 0; i < count; ++i) {
++        const uint32_t index = G<uint16_t>(indices + i * 2);
++        std::memcpy(packed.data() + size_t(i) * stride, HostPtr(vertices + index * stride), stride);
++    }
++    DrawUp(a[0], count, packed.data(), stride);
++    return 0;
++}
++#endif
++
++#if HAS_D3DDevice_RunPushBuffer
++HLE_STDCALL(D3DDevice_RunPushBuffer, 2) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    Walk(Dev(kDevPush));
++    if (!a[0]) return 0x8876086C;
++    if (a[1]) {
++        LOG_FIRST(8, "d3d: RunPushBuffer fixups are not supported (%08X)", a[1]);
++        return 0x80004001;
++    }
++    const uint32_t data = mem::VirtualFromPhysical(R32(a[0] + 4)), bytes = R32(a[0] + 12);
++    if (!data || bytes < 4 || (bytes & 3) || data + bytes < data) return 0x8876086C;
++    // Size includes the final hardware return/jump word, which is not a method packet.
++    Execute(data, data + bytes - 4, true);
++    return 0;
++}
++#endif
++
+ // BeginPush(dwords) hands out room for raw hardware commands, EndPush(end) runs what the title wrote there:
+ // Execute reads it as Walk does, and its simple states as the title set them.
+ HLE_STDCALL(D3DDevice_BeginPush, 1) {
+--- a/runtime/xdk/dsound.cpp
++++ b/runtime/xdk/dsound.cpp
+@@ -118,6 +118,8 @@
+     bool is3d = false;
+     uint32_t mode = 0;  // DS3DMODE: 1 head relative, 2 disabled
+     float p[3] = {}, min_dist = 1, max_dist = 1e9f;
++    // Xbox per-voice 3D extensions. Distance/Doppler factors are retained until velocity-based pitch is supported.
++    float distance_factor = 1, doppler_factor = 1, rolloff_factor = 1;
+     // ADPCM block cache
+     int64_t block = -1;
+     int16_t decoded[65 * 8];
+@@ -234,7 +236,7 @@
+     float dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+     float att = 1;
+     if (dist > v.min_dist && v.curve.empty()) {
+-        att = v.min_dist / std::min(dist, v.max_dist);
++        att = std::pow(v.min_dist / std::min(dist, v.max_dist), v.rolloff_factor);
+     } else if (dist > v.min_dist && v.max_dist > v.min_dist) {
+         // points spread evenly from min to max distance, 1.0 at min
+         float at = (std::min(dist, v.max_dist) - v.min_dist) / (v.max_dist - v.min_dist) * v.curve.size();
+@@ -452,7 +454,32 @@
+         SYM(CDirectSoundStream_SetFrequency), SYM(CDirectSoundStream_SetFilter), SYM(CDirectSoundStream_SetHeadroom),
+         SYM(CDirectSoundStream_SetMixBinVolumes), SYM(CDirectSoundStream_SetMixBins), SYM(CDirectSoundStream_SetMaxDistance),
+         SYM(CDirectSoundStream_SetMinDistance), SYM(CDirectSoundStream_SetPosition), SYM(CDirectSoundStream_SetVelocity),
+-        SYM(CDirectSoundStream_SetI3DL2Source), SYM(IDirectSoundStream_SetEG)};
++        SYM(CDirectSoundStream_SetI3DL2Source), SYM(IDirectSoundStream_SetEG),
++#if HAS_IDirectSoundBuffer_SetDistanceFactor
++        SYM(IDirectSoundBuffer_SetDistanceFactor),
++#endif
++#if HAS_IDirectSoundBuffer_SetDopplerFactor
++        SYM(IDirectSoundBuffer_SetDopplerFactor),
++#endif
++#if HAS_IDirectSoundBuffer_SetRolloffFactor
++        SYM(IDirectSoundBuffer_SetRolloffFactor),
++#endif
++#if HAS_IDirectSoundBuffer_SetMode
++        SYM(IDirectSoundBuffer_SetMode),
++#endif
++#if HAS_CDirectSoundStream_SetDistanceFactor
++        SYM(CDirectSoundStream_SetDistanceFactor),
++#endif
++#if HAS_CDirectSoundStream_SetDopplerFactor
++        SYM(CDirectSoundStream_SetDopplerFactor),
++#endif
++#if HAS_CDirectSoundStream_SetRolloffFactor
++        SYM(CDirectSoundStream_SetRolloffFactor),
++#endif
++#if HAS_CDirectSoundStream_SetMode
++        SYM(CDirectSoundStream_SetMode),
++#endif
++    };
+     std::string left;
+     // the library's own section: the WMA decoder shares the export ids and touches no DSOUND object
+     uint32_t lo = 0, hi = 0;
+@@ -738,6 +765,30 @@
+     return 0;
+ }
+ BUFFER(SetVelocity, 5) { return 0; }
++#if HAS_IDirectSoundBuffer_SetMode
++BUFFER(SetMode, 3) {
++    v.mode = a[1];
++    return 0;
++}
++#endif
++#if HAS_IDirectSoundBuffer_SetDistanceFactor
++BUFFER(SetDistanceFactor, 3) {
++    v.distance_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
++#if HAS_IDirectSoundBuffer_SetDopplerFactor
++BUFFER(SetDopplerFactor, 3) {
++    v.doppler_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
++#if HAS_IDirectSoundBuffer_SetRolloffFactor
++BUFFER(SetRolloffFactor, 3) {
++    v.rolloff_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
+ BUFFER(SetI3DL2Source, 3) { return 0; }
+ // (this, DS3DBUFFER, apply): position at +4, distances at +0x34 and +0x38, mode at +0x3C
+ BUFFER(SetAllParameters, 3) {
+@@ -914,4 +965,28 @@
+     return 0;
+ }
+ STREAM(SetVelocity, 5) { return 0; }
++#if HAS_CDirectSoundStream_SetMode
++STREAM(SetMode, 3) {
++    v.mode = a[1];
++    return 0;
++}
++#endif
++#if HAS_CDirectSoundStream_SetDistanceFactor
++STREAM(SetDistanceFactor, 3) {
++    v.distance_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
++#if HAS_CDirectSoundStream_SetDopplerFactor
++STREAM(SetDopplerFactor, 3) {
++    v.doppler_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
++#if HAS_CDirectSoundStream_SetRolloffFactor
++STREAM(SetRolloffFactor, 3) {
++    v.rolloff_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
+ STREAM(SetI3DL2Source, 3) { return 0; }
+--- a/runtime/xdk/layout.h
++++ b/runtime/xdk/layout.h
+@@ -77,6 +77,9 @@
+ #endif
+ #ifndef XDK_CDevice_FrontBuffer
+ #define XDK_CDevice_FrontBuffer 0xFFFFFFFFu
++#endif
++#ifndef XDK_CDevice_BufferCount
++#define XDK_CDevice_BufferCount 0xFFFFFFFFu
+ #endif
+ #ifndef XDK_CDevice_SwapCount
+ #define XDK_CDevice_SwapCount 0xFFFFFFFFu
+@@ -179,3 +182,7 @@
+ #ifndef XDK_RenderState_3925
+ #define XDK_RenderState_3925 0
+ #endif
++
++#ifndef XDK_RenderState_4531
++#define XDK_RenderState_4531 0
++#endif
+--- a/tests/test_iso.cpp
++++ b/tests/test_iso.cpp
+@@ -1,6 +1,7 @@
+ // a rip kept as an Xbox disc image: the build's iso_extract takes default.xbe, or every file, out of it, from an xiso
+ // and from a whole disc dump (the game partition 0x18300000 in), files in folders included
+ #include <unistd.h>
++#include <fcntl.h>
+ 
+ #include <cstdint>
+ #include <cstdio>
+@@ -87,6 +88,66 @@
+     }
+ }
+ 
++TEST("iso: a borrowed document descriptor stays readable after its owner closes it") {
++    const auto xbe = Xbe();
++    const auto image = MakeImage(0, false, xbe);
++    const int fd = open(image.c_str(), O_RDONLY);
++    CHECK(fd >= 0);
++    kernel::Disc disc;
++    std::string error;
++    CHECK_MSG(disc.OpenFd(fd, "selected SD card image", error), error);
++    CHECK(fcntl(fd, F_GETFD) != -1);  // the caller still owns the supplied descriptor
++    close(fd);
++    std::filesystem::remove(image);  // the path can no longer be reopened
++    std::vector<uint8_t> got;
++    CHECK(disc.Load("DEFAULT.XBE", got));
++    CHECK(got == xbe);
++    kernel::Disc invalid;
++    CHECK(!invalid.OpenFd(-1, "invalid descriptor", error));
++}
++
++TEST("documents: nested game files use bounded owned descriptors and positioned reads") {
++    auto path = std::filesystem::temp_directory_path() / ("tree_test_" + std::to_string(getpid()));
++    const auto data = Xbe();
++    { std::ofstream file(path, std::ios::binary); file.write(reinterpret_cast<const char*>(data.data()), data.size()); }
++    std::vector<int> opened;
++    {
++        kernel::Disc disc;
++        kernel::Disc::Entry root{"", 0, 0, true, {}};
++        kernel::Disc::Entry folder{"DATA", 0, 0, true, {}};
++        for (uint64_t i = 0; i < 70; ++i)
++            folder.children.push_back({std::to_string(i) + ".bin", i, uint32_t(data.size()), false, {}});
++        root.children.push_back(std::move(folder));
++        std::string error;
++        CHECK_MSG(disc.OpenTree(std::move(root), [&](uint64_t) {
++            int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
++            opened.push_back(fd); return fd;
++        }, "SD game folder", error), error);
++        for (int i = 0; i < 70; ++i) {
++            auto* entry = disc.Find("data\\" + std::to_string(i) + ".bin");
++            CHECK(entry != nullptr);
++            uint8_t got[16]{};
++            CHECK_EQ(disc.Read(*entry, data.size() - 8, got, sizeof got), 8u);
++            CHECK(std::memcmp(got, data.data() + data.size() - 8, 8) == 0);
++            CHECK_EQ(disc.Read(*entry, data.size(), got, sizeof got), 0u);
++        }
++        // Descriptor numbers can be reused after eviction. Count live handles
++        // through /proc instead of assuming an old numeric FD stays closed.
++        size_t live = 0;
++        for (auto& item : std::filesystem::directory_iterator("/proc/self/fd")) {
++            std::error_code ec;
++            if (std::filesystem::read_symlink(item.path(), ec) == path) ++live;
++        }
++        CHECK_EQ(live, size_t(64));
++        std::vector<uint8_t> got;
++        CHECK(disc.Load("DATA\\0.bin", got)); // reopen an evicted document
++        CHECK(got == data);
++        CHECK(disc.Find("DATA\\..\\data\\0.BIN") != nullptr);
++    }
++    for (int fd : opened) CHECK(fcntl(fd, F_GETFD) == -1);
++    std::filesystem::remove(path);
++}
++
+ TEST("iso: iso_extract writes the named file, in a folder too, and fails on one that is missing") {
+     std::vector<uint8_t> xbe = Xbe();
+     auto image = MakeImage(0x18300000, true, xbe);
+--- a/tests/test_render.cpp
++++ b/tests/test_render.cpp
+@@ -431,6 +431,77 @@
+     });
+     CHECK_MSG(d.count < kEdgeSlack, d.first);
+     CHECK_MSG(d.worst <= 3 || d.count, "the constant colour is exact");
++}
++
++TEST("render: W-buffer depth orders overlapping draws by clip W") {
++    REQUIRE(GuestUp());
++    for (float scale : {1.0f, 2.0f}) {
++        auto b = test::MakeRenderer(scale);
++        REQUIRE(b->Init(kW, kH));
++        GuestSurface rt(kFmtLinArgb, kW, kH), zs(kFmtLinD24S8, kW, kH);
++        State s = BaseState(rt.s, &zs.s);
++        s.zscale = 16;
++        auto vs = std::make_shared<VertexShader>();
++        vs->handle = 0x1001;
++        vs->inputs[0] = {0, 0, 0x42};
++        vs->inputs[1] = {0, 16, 0x42};
++        vs->stream_stride[0] = 32;
++        vs->program = {0, 1u << 21 | 0x1B, 2u << 26, 0xFu << 12 | 1u << 11,
++                       0, 1u << 21 | 1u << 9 | 0x1B, 2u << 26, 0xFu << 12 | 1u << 11 | 3u << 3 | 1u};
++        s.vs_handle = vs->handle;
++        s.vs = vs;
++        // Red: ordinary Z=0.8, W depth=4/16=0.25.
++        GuestBuffer red({4, 4, 12.8f, 4, 1, 0, 0, 1,
++                         60, 4, 12.8f, 4, 1, 0, 0, 1,
++                         4, 60, 12.8f, 4, 1, 0, 0, 1});
++        GuestBuffer green({4, 4, 8, 1, 0, 1, 0, 1,
++                           60, 4, 8, 1, 0, 1, 0, 1,
++                           4, 60, 8, 1, 0, 1, 0, 1});
++        b->Clear(s, 0, nullptr, kClearTarget | kClearZ, 0, 1, 0);
++        s.rs[kRsZEnable] = 2;
++        s.streams[0] = {red.header, 32};
++        b->Draw(s, kTriangleList, 0, 3, nullptr);
++        s.rs[kRsZEnable] = 1;
++        s.streams[0] = {green.header, 32};
++        b->Draw(s, kTriangleList, 0, 3, nullptr);
++        b->Sync(rt.data, 0);
++        CHECK_EQ(rt.At(10, 10), 0xFFFF0000u);
++    }
++}
++
++TEST("render: generated colour and depth data can become vertex streams without locking") {
++    REQUIRE(GuestUp());
++    for (uint32_t depth_format : {kFmtLinD24S8, 0x30u}) {
++        for (float scale : {1.0f, 2.0f}) {
++            auto b = test::MakeRenderer(scale);
++            REQUIRE(b->Init(kW, kH));
++            GuestSurface rt(kFmtLinArgb, kW, kH), color(kFmtLinArgb, kW, kH), depth(depth_format, kW, kH);
++            auto vs = std::make_shared<VertexShader>();
++            vs->handle = 0x1001;
++            vs->inputs[0] = {0, 0, 0x42};
++            vs->inputs[1] = {1, 0, 0x44};  // raw UBYTE4 reads the generated pixel bytes
++            vs->stream_stride[0] = 16;
++            vs->stream_stride[1] = 4;
++            vs->program = {0, 1u << 21 | 0x1B, 2u << 26, 0xFu << 12 | 1u << 11,
++                           0, 1u << 21 | 1u << 9 | 0x1B, 2u << 26, 0xFu << 12 | 1u << 11 | 3u << 3 | 1u};
++            GuestBuffer positions({4, 4, 0, 1, 60, 4, 0, 1, 4, 60, 0, 1}), alias({0});
++            State generated = BaseState(color.s, &depth.s);
++            b->Clear(generated, 0, nullptr, kClearTarget | kClearZ | kClearStencil, 0xFF0000FF, 0.25f, 0xAB);
++            State s = BaseState(rt.s, nullptr);
++            s.vs_handle = vs->handle;
++            s.vs = vs;
++            s.streams[0] = {positions.header, 16};
++            s.streams[1] = {alias.header, 4};
++            for (bool read_depth : {false, true}) {
++                kernel::W32(alias.header + 4, mem::PhysicalFromVirtual(read_depth ? depth.data : color.data));
++                b->Clear(s, 0, nullptr, kClearTarget, 0, 1, 0);
++                b->Draw(s, kTriangleList, 0, 3, nullptr);
++                b->Sync(rt.data, 0);
++                const uint32_t depth_color = depth_format == 0x30 ? 0x40004000u : 0x40AB0000u;
++                CHECK_EQ(rt.At(10, 10), read_depth ? depth_color : 0xFFFF0000u);
++            }
++        }
++    }
+ }
+ 
+ // Fixed function lighting, against D3D's lighting equation worked here: the reference renderer passes the vertex
+@@ -640,6 +711,67 @@
+     CHECK_MSG(red == 1 && green == 1 && other == 0, "lit:" + where);
+ }
+ 
++TEST("render: point sprites cover their size and generate texture 3 coordinates") {
++    REQUIRE(Vulkan());
++    for (float scale : {1.0f, 2.0f}) {
++      for (bool program : {false, true}) {
++        auto renderer = test::MakeRenderer(scale);
++        REQUIRE(renderer);
++        REQUIRE(renderer->Init(kW, kH));
++        GuestSurface rt(kFmtLinArgb, kW, kH), tex(kFmtLinArgb, 4, 4, true);
++        kernel::W32(tex.header + 12, (6 << 8) | (1 << 16) | (2 << 20) | (2 << 24));
++        kernel::W32(tex.header + 16, 0); // normalized, swizzled ARGB texture
++        for (uint32_t y = 0; y < 4; ++y)
++            for (uint32_t x = 0; x < 4; ++x) {
++                uint32_t index = (x & 1) | ((y & 1) << 1) | ((x & 2) << 1) | ((y & 2) << 2);
++                kernel::W32(tex.data + index * 4, Argb(255, x < 2 ? 220 : 0, y < 2 ? 160 : 0, 40));
++            }
++        GuestBuffer vb(RhwDiffuse({{{32, 32, 0.5f, 1}}}, {0xFFFFFFFF}));
++        State s = BaseState(rt.s, nullptr);
++        s.vs_handle = kFvfXyzRhw | kFvfDiffuse;
++        s.streams[0] = {vb.header, 20};
++        s.rs[kRsPointSize] = FloatBits(16);
++        s.rs[kRsPointSpriteEnable] = 1;
++        if (program) {
++            auto vs = std::make_shared<VertexShader>();
++            vs->handle = 0x1001;
++            vs->inputs[0] = {0, 0, 0x42};
++            vs->stream_stride[0] = 20;
++            vs->program = {0, 1u << 21 | 0x1B, 2u << 26, 0xFu << 12 | 1u << 11,
++                           0, 1u << 21 | 96u << 13 | 0x1B, 3u << 26, 0xFu << 12 | 1u << 11 | 3u << 3,
++                           0, 1u << 21 | 97u << 13, 3u << 26, 8u << 12 | 1u << 11 | 6u << 3 | 1u};
++            s.vs = vs;
++            s.vs_handle = vs->handle;
++            s.vsc[96] = {1, 1, 1, 1};
++            s.vsc[97] = {16, 0, 0, 0};
++            s.rs[kRsPointSize] = FloatBits(1);
++            s.rs[kRsPointScaleEnable] = 1;
++        }
++        for (auto& stage : s.tss) {
++            stage[kTssColorOp] = stage[kTssAlphaOp] = kTopSelectArg1;
++            stage[kTssColorArg1] = stage[kTssAlphaArg1] = kTaDiffuse;
++        }
++        s.tss[3][kTssColorArg1] = s.tss[3][kTssAlphaArg1] = kTaTexture;
++        s.textures[3] = tex.header;
++        renderer->Clear(s, 0, nullptr, kClearTarget, 0, 1, 0);
++        renderer->Draw(s, 1, 0, 1, nullptr);
++        renderer->Sync(rt.data, 0);
++        CHECK_EQ(rt.At(26, 26), Argb(255, 220, 160, 40));
++        CHECK_EQ(rt.At(37, 26), Argb(255, 0, 160, 40));
++        CHECK_EQ(rt.At(26, 37), Argb(255, 220, 0, 40));
++        CHECK_EQ(rt.At(37, 37), Argb(255, 0, 0, 40));
++        CHECK_EQ(rt.At(22, 32), 0u);
++        CHECK_EQ(rt.At(42, 32), 0u);
++        s.rs[kRsPointSizeMax] = FloatBits(8);
++        renderer->Clear(s, 0, nullptr, kClearTarget, 0, 1, 0);
++        renderer->Draw(s, 1, 0, 1, nullptr);
++        renderer->Sync(rt.data, 0);
++        CHECK_EQ(rt.At(26, 26), 0u);
++        CHECK_EQ(rt.At(30, 30), Argb(255, 220, 160, 40));
++      }
++    }
++}
++
+ TEST("render: immediate float4 screen vertices preserve XYZRHW") {
+     REQUIRE(Vulkan());
+     GuestBuffer native(RhwDiffuse({{{4, 4, 0.5f, 1}}, {{60, 10, 0.5f, 1}}, {{20, 58, 0.5f, 1}}},
+--- a/tests/test_shaders.cpp
++++ b/tests/test_shaders.cpp
+@@ -1,4 +1,4 @@
+-// the SDK's shader translation through DXC: every shape of shader it writes compiles for Vulkan, and lands where the
++// The SDK's shader translation: every shape of shader it writes compiles for Vulkan, and lands where the
+ // renderer binds its resources and constants
+ #include <cstddef>
+ #include <map>
+@@ -47,16 +47,22 @@
+             i += n;
+         }
+     }
+-    // the binding of the variable OpName calls name (DXC names resources by their HLSL names)
++    // DXC names a buffer variable; glslang names its struct and leaves the variable unnamed.
+     int BindingOf(const std::string& name) const {
+         for (auto& [id, n] : names)
+             if (n == name && binding.count(id)) return int(binding.at(id));
++        for (auto& [id, type] : var_type) {
++            auto pointer = pointer_to.find(type);
++            if (pointer == pointer_to.end()) continue;
++            auto block = names.find(pointer->second);
++            if (block != names.end() && block->second == name && binding.count(id)) return int(binding.at(id));
++        }
+         return -1;
+     }
+     // a constant buffer's member offset, by the block's type name and the member's
+     int Offset(const std::string& block, const std::string& member) const {
+         for (auto& [id, n] : names) {
+-            if (n != block || !members.count(id)) continue;
++            if ((n != block && "type." + n != block) || !members.count(id)) continue;
+             for (auto& [m, mn] : members.at(id))
+                 if (mn == member && offsets.count(id) && offsets.at(id).count(m)) return int(offsets.at(id).at(m));
+         }
+@@ -105,7 +111,7 @@
+ 
+ }  // namespace
+ 
+-TEST("shaders: DXC loads") {
++TEST("shaders: compiler loads") {
+     std::string why;
+     CHECK_MSG(gpu::vk::CompilerAvailable(why), why);
+ }
+--- a/xdk/4531/layout.toml
++++ b/xdk/4531/layout.toml
+@@ -2,6 +2,7 @@
+ # (USA, title 0x4947001B) default.xbe code at the address given. Keys not listed stay unknown and trap where first
+ # needed (see runtime/xdk/layout.h). Function addresses are from XbSymbolDatabase's D3D8/4531.inl.
+ [layout]
++RenderState_4531 = 1  # SetRenderStateNotInline 0x15CBE5/0x15CC09: deferred [83,118), complex dispatch 0x16A520 + state*4
+ # D3D8 CDevice, the static device D3D__pDevice points at (0x16EFE0)
+ CDevice_Push          = 0x0     # D3DDevice_SetTexture 0x15F042 loads the push pointer [device+0] and compares it with [device+4]
+ CDevice_PushThreshold = 0x4     # D3DDevice_SetTexture 0x15F042 compares the push pointer [device+0] with [device+4]
+@@ -14,10 +15,13 @@
+ CDevice_Transforms    = 0x750   # D3DDevice_SetTransform 0x15E140 copies 16 dwords to [device + type*64 + 0x750]
+ CDevice_RenderTarget  = 0x2070  # D3DDevice_SetRenderTarget 0x15E550 compares and stores [device+0x2070]
+ CDevice_Depth         = 0x2074  # D3DDevice_SetRenderTarget 0x15E819 stores the depth surface at [device+0x2074]
++CDevice_BufferCount   = 0x2078  # frame buffer reset 0x163C39 stores BackBufferCount + 1; 0x163B4A bounds the surface-pointer array
+ CDevice_BackBuffer    = 0x207C  # D3DDevice_GetBackBuffer 0x15EA9D reads [device + 0x207C] for index 0, D3DDevice_SetRenderTarget 0x15E58E compares with it
+ CDevice_FrontBuffer   = 0x2080  # D3DDevice_GetBackBuffer 0x15EA9D reads [device + 0x2080] for index -1 (BackBuffer + 4, as in 5849)
+ CDevice_AutoDepth     = 0x2088  # frame buffer reset 0x163B69 releases [device+0x2088] and clears it (BackBuffer + 0xC, as in 5849); the new store is not located yet
+ CDevice_SwapCount     = 0x2AD8  # D3DDevice_Swap 0x161DD9 and 0x161E15 read it, 0x161DF6 and 0x161E32 increment it, 0x161E61 returns it
++CDevice_GammaRamps    = 0x2498  # SetGammaRamp 0x15E070 copies to device+0x227C+0x21C+slot*0x300; GetGammaRamp 0x15E0C7 reads device+0x2498+slot*0x300
++CDevice_GammaPending  = 0x2A98  # SetGammaRamp 0x15E09E sets device+0x227C+0x81C+slot*4 for the next swap
+ CDevice_Size          = 0x2B00  # Direct3D_CreateDevice 0x162536 clears 0xAC0 dwords (0x2B00 bytes) of the device on failure
+ CDevice_PixelShader   = 0x370   # D3DDevice_SetPixelShader 0x160B34 stores the handle at [device+0x370]
+ CDevice_VertexShader  = 0x380   # D3DDevice_SetVertexShader 0x160388 stores the shader at [device+0x380], 0x16038E stores [device+0x384]

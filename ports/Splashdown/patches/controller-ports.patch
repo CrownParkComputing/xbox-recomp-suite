@@ -1,0 +1,12 @@
+diff --git a/runtime/xdk/xapi.cpp b/runtime/xdk/xapi.cpp
+--- a/runtime/xdk/xapi.cpp
++++ b/runtime/xdk/xapi.cpp
+@@ -68,7 +68,7 @@
+ 
+ HLE_STDCALL(XInputOpen, 4) {
+     uint32_t type = a[0], port = a[1];
+-    if (type != kGamepadType || port > 3) return 0;
++    if (type != kGamepadType || port > 3 || !input::Poll(int(port)).connected) return 0;
+     uint32_t h = mem::AllocSystem(16);
+     std::lock_guard<std::mutex> lock(g_ports_lock);
+     g_handles[h] = {port, 0, {}};

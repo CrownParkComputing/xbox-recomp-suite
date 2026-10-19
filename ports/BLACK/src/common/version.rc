@@ -1,0 +1,22 @@
+#include "build_info.h"
+
+1 VERSIONINFO
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "Black - XBE Recomp"
+            VALUE "ProductName", "Black - XBE Recomp"
+            VALUE "ProductVersion", BLACK_COMMIT
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+
+EUROPE RCDATA "europe.patch"

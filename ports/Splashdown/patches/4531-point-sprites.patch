@@ -1,0 +1,251 @@
+--- a/runtime/gpu/shaders.cpp
++++ b/runtime/gpu/shaders.cpp
+@@ -6,6 +6,7 @@
+ #include <cstdarg>
+ #include <cstdio>
+ #include <cstring>
++#include <cmath>
+ 
+ namespace gpu {
+ 
+@@ -32,6 +33,7 @@
+     float4 tc2 : TEXCOORD2;
+     float4 tc3 : TEXCOORD3;
+     float fogamt : TEXCOORD4;
++    float psize : TEXCOORD6;
+ };
+ cbuffer VC : register(b0) { float4 c[192]; };
+ cbuffer DC : register(b1) {
+@@ -53,6 +55,7 @@
+     float4 mat[5];
+     float4 amb;
+     float4 lt[56];
++    float4 pointParams;
+ };
+ )";
+ 
+@@ -240,6 +243,7 @@
+     o.tc2 = oT2;
+     o.tc3 = oT3;
+     o.fogamt = fogfactor(oFog.x);
++    o.psize = oPts.x;
+     return o;
+ }
+ )";
+@@ -249,7 +253,7 @@
+     // precise: EQUAL depth passes need bit exact positions
+     precise float4 R0 = 0, R1 = 0, R2 = 0, R3 = 0, R4 = 0, R5 = 0, R6 = 0, R7 = 0, R8 = 0, R9 = 0, R10 = 0, R11 = 0;
+     precise float4 oPos = 0;
+-    float4 oD0 = float4(0, 0, 0, 1), oD1 = 0, oB0 = float4(0, 0, 0, 1), oB1 = 0, oFog = 0, oPts = 1;
++    float4 oD0 = float4(0, 0, 0, 1), oD1 = 0, oB0 = float4(0, 0, 0, 1), oB1 = 0, oFog = 0, oPts = pointParams.x;
+     float4 oT0 = float4(0, 0, 0, 1), oT1 = float4(0, 0, 0, 1), oT2 = float4(0, 0, 0, 1), oT3 = float4(0, 0, 0, 1);
+ )";
+ 
+@@ -789,6 +793,7 @@
+     o.tc2 = oT2;
+     o.tc3 = oT3;
+     o.fogamt = fogfactor(abs(cp.z));
++    o.psize = oPts.x;
+     return o;
+ }
+ )";
+@@ -914,18 +919,32 @@
+     return s;
+ }
+ 
+-// a point covers its console pixel, several host pixels on an upscaled target: drawn as a quad of that size
++void FillPointConstants(const State& s, DrawConstants& c) {
++    auto value = [&](uint32_t state) { return std::bit_cast<float>(s.rs[state]); };
++    const float size = value(kRsPointSize), minimum = value(kRsPointSizeMin), maximum = value(kRsPointSizeMax);
++    c.point[0] = std::isfinite(size) && size > 0 ? size : 1;
++    c.point[1] = std::isfinite(minimum) ? std::clamp(minimum, 0.0f, 64.0f) : 0;
++    c.point[2] = std::isfinite(maximum) && maximum > 0 ? std::clamp(maximum, c.point[1], 64.0f) : 64;
++    c.point[3] = float((s.rs[kRsPointSpriteEnable] ? 1 : 0) | (s.rs[kRsPointScaleEnable] ? 2 : 0));
++}
++
++// Expand points using the programmed pixel size. NV2A point sprites replace
++// texture stage 3's coordinates; the other texture coordinates stay intact.
+ std::string PointHlsl() {
+     return Common() + R"(
+ [maxvertexcount(4)]
+ void main(point VOut v[1], inout TriangleStream<VOut> strip) {
+-    float2 half_pixel = v[0].pos.w / surf.xy;  // in clip units, the target spans 2 across surf.xy pixels
++    float2 half_pixel = v[0].pos.w / surf.xy;
++    float size = clamp((uint(pointParams.w) & 2) ? v[0].psize : pointParams.x, pointParams.y, pointParams.z);
++    bool sprite = (uint(pointParams.w) & 1) != 0;
++    float2 radius = size * half_pixel;
+     // a target is read half a host pixel back (surf.w host pixels per console pixel): left and top reach that far
+-    float2 back = (0.5 - 1e-3) * 2 * half_pixel / surf.w;
++    float2 back = size <= 1 && !sprite ? (0.5 - 1e-3) * 2 * half_pixel / surf.w : 0;
+     for (int i = 0; i < 4; i++) {
+         VOut o = v[0];
+-        o.pos.x += (i & 1) ? half_pixel.x : -half_pixel.x - back.x;
+-        o.pos.y += (i & 2) ? -half_pixel.y : half_pixel.y + back.y;
++        o.pos.x += (i & 1) ? radius.x : -radius.x - back.x;
++        o.pos.y += (i & 2) ? -radius.y : radius.y + back.y;
++        if (sprite) o.tc3 = float4((i & 1) ? 1 : 0, (i & 2) ? 1 : 0, 1, 1);
+         strip.Append(o);
+     }
+ }
+--- a/runtime/gpu/shaders.h
++++ b/runtime/gpu/shaders.h
+@@ -97,6 +97,9 @@
+     float mat[5][4];     // material diffuse, ambient, specular, emissive, power
+     float amb[4];        // D3DRS_AMBIENT
+     float lt[8][7][4];   // per light: diffuse, specular, ambient, position range, direction falloff, attenuation, cos theta/2 phi/2
++    float point[4];     // size, minimum, maximum, flags: sprite coordinates and vertex-program size
+ };
+ 
++void FillPointConstants(const State& s, DrawConstants& c);
++
+ }  // namespace gpu
+--- a/runtime/gpu/vulkan.cpp
++++ b/runtime/gpu/vulkan.cpp
+@@ -1681,6 +1681,10 @@
+     FillFogConstants(s, sh.prog, c);
+     FillCombinerConstants(s, c);
+     FillTextureConstants(s, stages, c);
++    FillPointConstants(s, c);
++    if (k.topo == uint32_t(Topology::Points))
++        LOG_FIRST(4, "vulkan: points size %.3f range %.3f..%.3f sprite %u scale %u", c.point[0], c.point[1], c.point[2],
++                  s.rs[kRsPointSpriteEnable], s.rs[kRsPointScaleEnable]);
+     if (sh.fixed_transform) {
+         FillTransformConstants(s, size, c);
+         FillLightConstants(s, sh.fk, c);
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -2186,6 +2186,7 @@
+     FillCombinerConstants(s, c);
+     if (ext_) ext_->Constants(reinterpret_cast<float(*)[4]>(vc.cpu), c.ext, bound_rt_, k.blend ? k.src : 1);
+     FillTextureConstants(s, stages, c);
++    FillPointConstants(s, c);
+     if (sh.fixed_transform) {
+         FillTransformConstants(s, size, c);
+         FillLightConstants(s, sh.fk, c);
+--- a/runtime/xdk/d3d8.cpp
++++ b/runtime/xdk/d3d8.cpp
+@@ -284,6 +284,13 @@
+ // Translate the 3925 guest table into the renderer's 5849 state indices.
+ // The complex table was verified against PGR's dispatch table at 000F4DD8.
+ constexpr uint32_t CanonicalRenderState(uint32_t rs) {
++    if (XDK_RenderState_4531) {
++        if (rs < 83) return rs;
++        if (rs < 118) return rs + 9;
++        if (rs <= 139) return rs + 18;
++        if (rs <= 146) return rs + 19; // no SampleAlpha in the 4531 dispatch table
++        return gpu::kRsMax;
++    }
+     if (!XDK_RenderState_3925 || rs < 82) return rs;
+     if (rs < 116) return rs + 10;
+     if (rs <= 133) return rs + 20;
+@@ -293,6 +300,11 @@
+     return gpu::kRsMax;
+ }
+ constexpr uint32_t GuestRenderState(uint32_t rs) {
++    if (XDK_RenderState_4531) {
++        for (uint32_t old = 83; old < 147; ++old)
++            if (CanonicalRenderState(old) == rs) return old;
++        return gpu::kRsMax;
++    }
+     if (!XDK_RenderState_3925) return rs;
+     for (uint32_t old = 82; old < 144; ++old)
+         if (CanonicalRenderState(old) == rs) return old;
+@@ -854,7 +866,7 @@
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
+     Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
+     uint32_t rs = a[0], v = a[1];
+-    if (rs < (XDK_RenderState_3925 ? 82u : gpu::kRsDeferredFirst)) {
++    if (rs < (XDK_RenderState_3925 ? 82u : XDK_RenderState_4531 ? 83u : gpu::kRsDeferredFirst)) {
+         uint32_t method = R32(kSimpleEncode + rs * 4) & 0x1FFC;
+         g_state.simple[method >> 2] = v;
+         W32(kRenderState + rs * 4, v);  // titles read their states back from the library's table
+--- a/runtime/xdk/layout.h
++++ b/runtime/xdk/layout.h
+@@ -182,3 +182,7 @@
+ #ifndef XDK_RenderState_3925
+ #define XDK_RenderState_3925 0
+ #endif
++
++#ifndef XDK_RenderState_4531
++#define XDK_RenderState_4531 0
++#endif
+--- a/xdk/4531/layout.toml
++++ b/xdk/4531/layout.toml
+@@ -2,6 +2,7 @@
+ # (USA, title 0x4947001B) default.xbe code at the address given. Keys not listed stay unknown and trap where first
+ # needed (see runtime/xdk/layout.h). Function addresses are from XbSymbolDatabase's D3D8/4531.inl.
+ [layout]
++RenderState_4531 = 1  # SetRenderStateNotInline 0x15CBE5/0x15CC09: deferred [83,118), complex dispatch 0x16A520 + state*4
+ # D3D8 CDevice, the static device D3D__pDevice points at (0x16EFE0)
+ CDevice_Push          = 0x0     # D3DDevice_SetTexture 0x15F042 loads the push pointer [device+0] and compares it with [device+4]
+ CDevice_PushThreshold = 0x4     # D3DDevice_SetTexture 0x15F042 compares the push pointer [device+0] with [device+4]
+--- a/tests/test_render.cpp
++++ b/tests/test_render.cpp
+@@ -711,6 +711,67 @@
+     CHECK_MSG(red == 1 && green == 1 && other == 0, "lit:" + where);
+ }
+ 
++TEST("render: point sprites cover their size and generate texture 3 coordinates") {
++    REQUIRE(Vulkan());
++    for (float scale : {1.0f, 2.0f}) {
++      for (bool program : {false, true}) {
++        auto renderer = test::MakeRenderer(scale);
++        REQUIRE(renderer);
++        REQUIRE(renderer->Init(kW, kH));
++        GuestSurface rt(kFmtLinArgb, kW, kH), tex(kFmtLinArgb, 4, 4, true);
++        kernel::W32(tex.header + 12, (6 << 8) | (1 << 16) | (2 << 20) | (2 << 24));
++        kernel::W32(tex.header + 16, 0); // normalized, swizzled ARGB texture
++        for (uint32_t y = 0; y < 4; ++y)
++            for (uint32_t x = 0; x < 4; ++x) {
++                uint32_t index = (x & 1) | ((y & 1) << 1) | ((x & 2) << 1) | ((y & 2) << 2);
++                kernel::W32(tex.data + index * 4, Argb(255, x < 2 ? 220 : 0, y < 2 ? 160 : 0, 40));
++            }
++        GuestBuffer vb(RhwDiffuse({{{32, 32, 0.5f, 1}}}, {0xFFFFFFFF}));
++        State s = BaseState(rt.s, nullptr);
++        s.vs_handle = kFvfXyzRhw | kFvfDiffuse;
++        s.streams[0] = {vb.header, 20};
++        s.rs[kRsPointSize] = FloatBits(16);
++        s.rs[kRsPointSpriteEnable] = 1;
++        if (program) {
++            auto vs = std::make_shared<VertexShader>();
++            vs->handle = 0x1001;
++            vs->inputs[0] = {0, 0, 0x42};
++            vs->stream_stride[0] = 20;
++            vs->program = {0, 1u << 21 | 0x1B, 2u << 26, 0xFu << 12 | 1u << 11,
++                           0, 1u << 21 | 96u << 13 | 0x1B, 3u << 26, 0xFu << 12 | 1u << 11 | 3u << 3,
++                           0, 1u << 21 | 97u << 13, 3u << 26, 8u << 12 | 1u << 11 | 6u << 3 | 1u};
++            s.vs = vs;
++            s.vs_handle = vs->handle;
++            s.vsc[96] = {1, 1, 1, 1};
++            s.vsc[97] = {16, 0, 0, 0};
++            s.rs[kRsPointSize] = FloatBits(1);
++            s.rs[kRsPointScaleEnable] = 1;
++        }
++        for (auto& stage : s.tss) {
++            stage[kTssColorOp] = stage[kTssAlphaOp] = kTopSelectArg1;
++            stage[kTssColorArg1] = stage[kTssAlphaArg1] = kTaDiffuse;
++        }
++        s.tss[3][kTssColorArg1] = s.tss[3][kTssAlphaArg1] = kTaTexture;
++        s.textures[3] = tex.header;
++        renderer->Clear(s, 0, nullptr, kClearTarget, 0, 1, 0);
++        renderer->Draw(s, 1, 0, 1, nullptr);
++        renderer->Sync(rt.data, 0);
++        CHECK_EQ(rt.At(26, 26), Argb(255, 220, 160, 40));
++        CHECK_EQ(rt.At(37, 26), Argb(255, 0, 160, 40));
++        CHECK_EQ(rt.At(26, 37), Argb(255, 220, 0, 40));
++        CHECK_EQ(rt.At(37, 37), Argb(255, 0, 0, 40));
++        CHECK_EQ(rt.At(22, 32), 0u);
++        CHECK_EQ(rt.At(42, 32), 0u);
++        s.rs[kRsPointSizeMax] = FloatBits(8);
++        renderer->Clear(s, 0, nullptr, kClearTarget, 0, 1, 0);
++        renderer->Draw(s, 1, 0, 1, nullptr);
++        renderer->Sync(rt.data, 0);
++        CHECK_EQ(rt.At(26, 26), 0u);
++        CHECK_EQ(rt.At(30, 30), Argb(255, 220, 160, 40));
++      }
++    }
++}
++
+ TEST("render: immediate float4 screen vertices preserve XYZRHW") {
+     REQUIRE(Vulkan());
+     GuestBuffer native(RhwDiffuse({{{4, 4, 0.5f, 1}}, {{60, 10, 0.5f, 1}}, {{20, 58, 0.5f, 1}}},

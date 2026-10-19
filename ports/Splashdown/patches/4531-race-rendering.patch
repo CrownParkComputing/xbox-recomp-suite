@@ -1,0 +1,270 @@
+--- a/runtime/gpu/vulkan.h
++++ b/runtime/gpu/vulkan.h
+@@ -66,6 +66,7 @@
+     bool depth = false;
+     uint32_t gw = 0, gh = 0, w = 0, h = 0;  // console size, host size
+     uint32_t data = 0, bytes = 0;
++    TextureDesc guest;
+     uint64_t epoch = 0, sig = 0;  // last lock seen, guest memory as last matched
+     bool drawn = false;           // the GPU wrote it since the last readback
+     std::vector<uint8_t> read;    // what Sync left in guest memory
+@@ -330,6 +331,8 @@
+     CopySource PrepareCopySource(Target& t, const ShrinkOptions& o);
+     ImageRef Shrink(Image& src, uint32_t w, uint32_t h, const ShrinkOptions& o = {});
+     bool ReadBack(Image& res, uint32_t w, uint32_t h, std::vector<uint8_t>& out);
++    void SyncVertexTargets(const State& s);
++    void SyncDepthTarget(Target& t);
+     void ResetLate(Late& l, const Target& t);
+     Image* PrepareLateSource(Target& t, Late& l);
+     void RecordLateCopy(Late& l, uint32_t slot, Image& src);
+--- a/runtime/gpu/vulkan.cpp
++++ b/runtime/gpu/vulkan.cpp
+@@ -1045,7 +1045,8 @@
+     if (!CreateTargetResource(t)) return nullptr;
+     g_perf.targets++;
+     t.data = slot.data;
+-    t.bytes = depth ? slot.gw * slot.gh * 4 : GuestPitch(slot.gw) * slot.gh;
++    Describe(s.header, t.guest);
++    t.bytes = depth && t.guest.linear ? t.guest.pitch * slot.gh : GuestPitch(slot.gw) * slot.gh;
+     t.epoch = DirtyEpoch(slot.data);
+     t.sig = MemSig(slot.data, t.bytes);
+     Target& ref = targets_[slot.key];
+@@ -1746,6 +1747,7 @@
+     g_perf.draws++;
+     if (cap_) CapStep(s.rt);
+     if (DepthCopy(s)) return;
++    SyncVertexTargets(s);
+     Assembled& a = asm_;
+     if (!AssembleDraw(s, prim, start, count, indices, a)) return;
+     // past the ring every upload is a buffer of its own: seconds lost on a frame that draws a whole level once
+--- a/runtime/gpu/vulkan_readback.cpp
++++ b/runtime/gpu/vulkan_readback.cpp
+@@ -4,6 +4,7 @@
+ #include <chrono>
+ #include <cstring>
+ #include <ctime>
++#include <cmath>
+ 
+ #include "app/app.h"
+ #include "core/diag.h"
+@@ -57,6 +58,79 @@
+     rb->Invalidate();
+     out.assign(rb->map, rb->map + size_t(w) * h * 4);
+     return true;
++}
++
++// Xbox render targets can be rebound as vertex buffers without a CPU lock.
++// Bring generated vertices into the guest bytes before the input assembler reads them.
++void VulkanRenderer::SyncVertexTargets(const State& s) {
++    VertexShader fvf;
++    const VertexShader* layout = s.vs.get();
++    if (!(s.vs_handle & 1)) {
++        FvfInputs(s.vs_handle, fvf);
++        layout = &fvf;
++    }
++    if (!layout) return;
++    uint16_t used = 0;
++    for (const auto& in : layout->inputs)
++        if (in.stream >= 0 && in.stream < 16 && in.type && in.type != 2) used |= uint16_t(1u << in.stream);
++    for (unsigned i = 0; i < 16; ++i) {
++        if (!(used & (1u << i)) || !s.streams[i].vb) continue;
++        uint32_t data = mem::VirtualFromPhysical(kernel::R32(s.streams[i].vb + 4));
++        if (TargetStale(data)) continue;
++        for (auto& [key, t] : targets_) {
++            if (t.data != data || !t.drawn) continue;
++            if (t.depth) SyncDepthTarget(t);
++            else Sync(data, 0);
++        }
++    }
++}
++
++void VulkanRenderer::SyncDepthTarget(Target& t) {
++    // Integer depth/stencil has a different byte order from Vulkan's separate
++    // depth and stencil copies. Preserve those bytes for UBYTE4 vertex inputs.
++    const bool d16 = t.guest.format == 0x30;
++    if (!t.guest.linear || (!d16 && t.guest.format != 0x2E)) return;
++    const uint64_t pixels = uint64_t(t.w) * t.h;
++    BufferRef rb = ctx_.CreateBuffer(pixels * 5, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Memory::Readback);
++    if (!rb) return;
++    Barrier(*t.res, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
++    VkBufferImageCopy c{};
++    c.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
++    c.imageExtent = {t.w, t.h, 1};
++    vkCmdCopyImageToBuffer(Cb(), t.res->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb->buffer, 1, &c);
++    if (!d16) {
++        c.bufferOffset = pixels * 4;
++        c.imageSubresource.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
++        vkCmdCopyImageToBuffer(Cb(), t.res->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb->buffer, 1, &c);
++    }
++    Flush();
++    rb->Invalidate();
++    for (uint32_t y = 0; y < t.gh; ++y) {
++        // Pick the centre host sample when rendering above the console resolution.
++        uint32_t hy = std::min(uint32_t((uint64_t(y) * 2 + 1) * t.h / (t.gh * 2)), t.h - 1);
++        auto* row = static_cast<uint8_t*>(kernel::HostPtr(t.data + y * t.guest.pitch));
++        for (uint32_t x = 0; x < t.gw; ++x) {
++            uint32_t hx = std::min(uint32_t((uint64_t(x) * 2 + 1) * t.w / (t.gw * 2)), t.w - 1);
++            uint64_t sample = uint64_t(hy) * t.w + hx;
++            uint32_t depth;
++            std::memcpy(&depth, rb->map + sample * 4, 4);
++            if (t.res->desc.format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
++                float z;
++                std::memcpy(&z, &depth, 4);
++                depth = uint32_t(std::lround(std::clamp(z, 0.0f, 1.0f) * 16777215.0f));
++            }
++            if (d16) {
++                uint16_t value = uint16_t(std::lround(double(depth & 0xFFFFFF) * 65535.0 / 16777215.0));
++                std::memcpy(row + x * 2, &value, 2);
++            } else {
++                uint32_t value = (depth << 8) | rb->map[pixels * 4 + sample];
++                std::memcpy(row + x * 4, &value, 4);
++            }
++        }
++    }
++    t.drawn = false;
++    t.epoch = DirtyEpoch(t.data);
++    t.sig = MemSig(t.data, t.bytes);
+ }
+ 
+ // the CPU reads a surface the GPU drew: bring the pixels back
+--- a/runtime/gpu/shaders.h
++++ b/runtime/gpu/shaders.h
+@@ -32,6 +32,7 @@
+     uint32_t flat = 0, two_sided = 0;
+     uint32_t proj = 0;       // fixed function: bit per stage sampled at coordinates divided by w
+     uint32_t quad = 0;       // a screen quad: QuadHlsl
++    uint32_t wbuffer = 0;    // D3DZB_USEW: store interpolated clip W instead of Z
+     bool operator==(const PixelKey& o) const;
+ };
+ 
+--- a/runtime/gpu/shaders.cpp
++++ b/runtime/gpu/shaders.cpp
+@@ -579,6 +579,7 @@
+     }
+     k.flat = s.simple[kMShadeMode >> 2] == 0x1D00;  // D3DSHADE_FLAT
+     k.two_sided = s.rs[kRsTwoSidedLighting] != 0;
++    k.wbuffer = s.rs[kRsZEnable] == 2;
+     if (s.ps) {
+         const uint32_t* d = s.ps->def;
+         k.programmable = 1;
+@@ -802,7 +803,12 @@
+         const char* type = t.shadow ? "Texture2D<float>" : t.kind == kTex3D ? "Texture3D" : t.kind == kTexCube ? "TextureCube" : "Texture2D";
+         s += F("%s tex%d : register(t%d);\n%s smp%d : register(s%d);\n", type, i, i, t.shadow ? "SamplerComparisonState" : "SamplerState", i, i);
+     }
+-    s += F("float4 main(VOut i, bool front : SV_IsFrontFace) : SV_Target {\n");
++    if (k.wbuffer) {
++        s += "struct POut { float4 color : SV_Target; float depth : SV_Depth; };\n";
++        s += "POut main(VOut i, bool front : SV_IsFrontFace) {\n";
++    } else {
++        s += "float4 main(VOut i, bool front : SV_IsFrontFace) : SV_Target {\n";
++    }
+     s += "    float4 tc0 = i.tc0, tc1 = i.tc1, tc2 = i.tc2, tc3 = i.tc3;\n";
+     s += k.two_sided ? "    float4 v0 = front ? i.d0 : i.b0, v1 = front ? i.d1 : i.b1;\n" : "    float4 v0 = i.d0, v1 = i.d1;\n";
+     s += "    if (misc.w == 0) v1 = float4(0, 0, 0, 1);\n";
+@@ -875,7 +881,14 @@
+         body += "cur.rgb = saturate(cur.rgb + v1.rgb);\n";
+         body += "float4 outc = float4(lerp(fogin.rgb, cur.rgb, fogin.a), cur.a);\n";
+     }
+-    body += "alphatest(outc.a);\n" + Hooks().Output() + "return outc;\n}\n";
++    body += "alphatest(outc.a);\n" + Hooks().Output();
++    if (k.wbuffer) {
++        // DXC uses Direct3D position W (including -fvk-use-dx-position-w).
++        // Xbox W-buffer values use the depth surface's integer range.
++        body += "POut o; o.color = outc; o.depth = saturate(i.pos.w * surf.z); return o;\n}\n";
++    } else {
++        body += "return outc;\n}\n";
++    }
+     s += body;
+     return k.quad ? QuadHlsl(std::move(s)) : s;
+ }
+@@ -890,7 +903,9 @@
+     sub("    if (surf.w == 0 && abs(p.x - (surf.x - 0.5)) < 1e-3) p.x = surf.x;\n", "    o.e.xy = p.xy;\n", "");
+     sub("    if (surf.w == 0 && abs(p.y - (surf.y - 0.5)) < 1e-3) p.y = surf.y;\n", "", "    o.e.zw = p.xy;\n");
+     sub("    o.pos = cp;\n", "    o.e = float4(sp, (float2(cp.x, -cp.y) / cp.w + 1) * 0.5 * surf.xy);\n", "");
+-    sub("float4 main(VOut i, bool front", R"(float4 unstretch(float4 t, float4 e) {
++    const char* entry = s.find("POut main(VOut i, bool front") != std::string::npos
++                            ? "POut main(VOut i, bool front" : "float4 main(VOut i, bool front";
++    sub(entry, R"(float4 unstretch(float4 t, float4 e) {
+     float2 d = e.zw - e.xy, g = float2(ddx(e.x), ddy(e.y));
+     return t + (d.x ? d.x / g.x * ddx(t) : 0) + (d.y ? d.y / g.y * ddy(t) : 0);
+ }
+--- a/tests/test_render.cpp
++++ b/tests/test_render.cpp
+@@ -431,6 +431,77 @@
+     });
+     CHECK_MSG(d.count < kEdgeSlack, d.first);
+     CHECK_MSG(d.worst <= 3 || d.count, "the constant colour is exact");
++}
++
++TEST("render: W-buffer depth orders overlapping draws by clip W") {
++    REQUIRE(GuestUp());
++    for (float scale : {1.0f, 2.0f}) {
++        auto b = test::MakeRenderer(scale);
++        REQUIRE(b->Init(kW, kH));
++        GuestSurface rt(kFmtLinArgb, kW, kH), zs(kFmtLinD24S8, kW, kH);
++        State s = BaseState(rt.s, &zs.s);
++        s.zscale = 16;
++        auto vs = std::make_shared<VertexShader>();
++        vs->handle = 0x1001;
++        vs->inputs[0] = {0, 0, 0x42};
++        vs->inputs[1] = {0, 16, 0x42};
++        vs->stream_stride[0] = 32;
++        vs->program = {0, 1u << 21 | 0x1B, 2u << 26, 0xFu << 12 | 1u << 11,
++                       0, 1u << 21 | 1u << 9 | 0x1B, 2u << 26, 0xFu << 12 | 1u << 11 | 3u << 3 | 1u};
++        s.vs_handle = vs->handle;
++        s.vs = vs;
++        // Red: ordinary Z=0.8, W depth=4/16=0.25.
++        GuestBuffer red({4, 4, 12.8f, 4, 1, 0, 0, 1,
++                         60, 4, 12.8f, 4, 1, 0, 0, 1,
++                         4, 60, 12.8f, 4, 1, 0, 0, 1});
++        GuestBuffer green({4, 4, 8, 1, 0, 1, 0, 1,
++                           60, 4, 8, 1, 0, 1, 0, 1,
++                           4, 60, 8, 1, 0, 1, 0, 1});
++        b->Clear(s, 0, nullptr, kClearTarget | kClearZ, 0, 1, 0);
++        s.rs[kRsZEnable] = 2;
++        s.streams[0] = {red.header, 32};
++        b->Draw(s, kTriangleList, 0, 3, nullptr);
++        s.rs[kRsZEnable] = 1;
++        s.streams[0] = {green.header, 32};
++        b->Draw(s, kTriangleList, 0, 3, nullptr);
++        b->Sync(rt.data, 0);
++        CHECK_EQ(rt.At(10, 10), 0xFFFF0000u);
++    }
++}
++
++TEST("render: generated colour and depth data can become vertex streams without locking") {
++    REQUIRE(GuestUp());
++    for (uint32_t depth_format : {kFmtLinD24S8, 0x30u}) {
++        for (float scale : {1.0f, 2.0f}) {
++            auto b = test::MakeRenderer(scale);
++            REQUIRE(b->Init(kW, kH));
++            GuestSurface rt(kFmtLinArgb, kW, kH), color(kFmtLinArgb, kW, kH), depth(depth_format, kW, kH);
++            auto vs = std::make_shared<VertexShader>();
++            vs->handle = 0x1001;
++            vs->inputs[0] = {0, 0, 0x42};
++            vs->inputs[1] = {1, 0, 0x44};  // raw UBYTE4 reads the generated pixel bytes
++            vs->stream_stride[0] = 16;
++            vs->stream_stride[1] = 4;
++            vs->program = {0, 1u << 21 | 0x1B, 2u << 26, 0xFu << 12 | 1u << 11,
++                           0, 1u << 21 | 1u << 9 | 0x1B, 2u << 26, 0xFu << 12 | 1u << 11 | 3u << 3 | 1u};
++            GuestBuffer positions({4, 4, 0, 1, 60, 4, 0, 1, 4, 60, 0, 1}), alias({0});
++            State generated = BaseState(color.s, &depth.s);
++            b->Clear(generated, 0, nullptr, kClearTarget | kClearZ | kClearStencil, 0xFF0000FF, 0.25f, 0xAB);
++            State s = BaseState(rt.s, nullptr);
++            s.vs_handle = vs->handle;
++            s.vs = vs;
++            s.streams[0] = {positions.header, 16};
++            s.streams[1] = {alias.header, 4};
++            for (bool read_depth : {false, true}) {
++                kernel::W32(alias.header + 4, mem::PhysicalFromVirtual(read_depth ? depth.data : color.data));
++                b->Clear(s, 0, nullptr, kClearTarget, 0, 1, 0);
++                b->Draw(s, kTriangleList, 0, 3, nullptr);
++                b->Sync(rt.data, 0);
++                const uint32_t depth_color = depth_format == 0x30 ? 0x40004000u : 0x40AB0000u;
++                CHECK_EQ(rt.At(10, 10), read_depth ? depth_color : 0xFFFF0000u);
++            }
++        }
++    }
+ }
+ 
+ // Fixed function lighting, against D3D's lighting equation worked here: the reference renderer passes the vertex

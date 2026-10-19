@@ -1,0 +1,114 @@
+--- a/runtime/xdk/dsound.cpp
++++ b/runtime/xdk/dsound.cpp
+@@ -118,6 +118,8 @@
+     bool is3d = false;
+     uint32_t mode = 0;  // DS3DMODE: 1 head relative, 2 disabled
+     float p[3] = {}, min_dist = 1, max_dist = 1e9f;
++    // Xbox per-voice 3D extensions. Distance/Doppler factors are retained until velocity-based pitch is supported.
++    float distance_factor = 1, doppler_factor = 1, rolloff_factor = 1;
+     // ADPCM block cache
+     int64_t block = -1;
+     int16_t decoded[65 * 8];
+@@ -234,7 +236,7 @@
+     float dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+     float att = 1;
+     if (dist > v.min_dist && v.curve.empty()) {
+-        att = v.min_dist / std::min(dist, v.max_dist);
++        att = std::pow(v.min_dist / std::min(dist, v.max_dist), v.rolloff_factor);
+     } else if (dist > v.min_dist && v.max_dist > v.min_dist) {
+         // points spread evenly from min to max distance, 1.0 at min
+         float at = (std::min(dist, v.max_dist) - v.min_dist) / (v.max_dist - v.min_dist) * v.curve.size();
+@@ -452,7 +454,32 @@
+         SYM(CDirectSoundStream_SetFrequency), SYM(CDirectSoundStream_SetFilter), SYM(CDirectSoundStream_SetHeadroom),
+         SYM(CDirectSoundStream_SetMixBinVolumes), SYM(CDirectSoundStream_SetMixBins), SYM(CDirectSoundStream_SetMaxDistance),
+         SYM(CDirectSoundStream_SetMinDistance), SYM(CDirectSoundStream_SetPosition), SYM(CDirectSoundStream_SetVelocity),
+-        SYM(CDirectSoundStream_SetI3DL2Source), SYM(IDirectSoundStream_SetEG)};
++        SYM(CDirectSoundStream_SetI3DL2Source), SYM(IDirectSoundStream_SetEG),
++#if HAS_IDirectSoundBuffer_SetDistanceFactor
++        SYM(IDirectSoundBuffer_SetDistanceFactor),
++#endif
++#if HAS_IDirectSoundBuffer_SetDopplerFactor
++        SYM(IDirectSoundBuffer_SetDopplerFactor),
++#endif
++#if HAS_IDirectSoundBuffer_SetRolloffFactor
++        SYM(IDirectSoundBuffer_SetRolloffFactor),
++#endif
++#if HAS_IDirectSoundBuffer_SetMode
++        SYM(IDirectSoundBuffer_SetMode),
++#endif
++#if HAS_CDirectSoundStream_SetDistanceFactor
++        SYM(CDirectSoundStream_SetDistanceFactor),
++#endif
++#if HAS_CDirectSoundStream_SetDopplerFactor
++        SYM(CDirectSoundStream_SetDopplerFactor),
++#endif
++#if HAS_CDirectSoundStream_SetRolloffFactor
++        SYM(CDirectSoundStream_SetRolloffFactor),
++#endif
++#if HAS_CDirectSoundStream_SetMode
++        SYM(CDirectSoundStream_SetMode),
++#endif
++    };
+     std::string left;
+     // the library's own section: the WMA decoder shares the export ids and touches no DSOUND object
+     uint32_t lo = 0, hi = 0;
+@@ -738,6 +765,30 @@
+     return 0;
+ }
+ BUFFER(SetVelocity, 5) { return 0; }
++#if HAS_IDirectSoundBuffer_SetMode
++BUFFER(SetMode, 3) {
++    v.mode = a[1];
++    return 0;
++}
++#endif
++#if HAS_IDirectSoundBuffer_SetDistanceFactor
++BUFFER(SetDistanceFactor, 3) {
++    v.distance_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
++#if HAS_IDirectSoundBuffer_SetDopplerFactor
++BUFFER(SetDopplerFactor, 3) {
++    v.doppler_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
++#if HAS_IDirectSoundBuffer_SetRolloffFactor
++BUFFER(SetRolloffFactor, 3) {
++    v.rolloff_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
+ BUFFER(SetI3DL2Source, 3) { return 0; }
+ // (this, DS3DBUFFER, apply): position at +4, distances at +0x34 and +0x38, mode at +0x3C
+ BUFFER(SetAllParameters, 3) {
+@@ -914,4 +965,28 @@
+     return 0;
+ }
+ STREAM(SetVelocity, 5) { return 0; }
++#if HAS_CDirectSoundStream_SetMode
++STREAM(SetMode, 3) {
++    v.mode = a[1];
++    return 0;
++}
++#endif
++#if HAS_CDirectSoundStream_SetDistanceFactor
++STREAM(SetDistanceFactor, 3) {
++    v.distance_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
++#if HAS_CDirectSoundStream_SetDopplerFactor
++STREAM(SetDopplerFactor, 3) {
++    v.doppler_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
++#if HAS_CDirectSoundStream_SetRolloffFactor
++STREAM(SetRolloffFactor, 3) {
++    v.rolloff_factor = ArgF(a, 1);
++    return 0;
++}
++#endif
+ STREAM(SetI3DL2Source, 3) { return 0; }

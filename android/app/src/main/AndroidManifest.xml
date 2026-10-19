@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x00401000" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <application android:label="Splashdown" android:icon="@drawable/ic_launcher"
+        android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen"
+        android:allowBackup="false" android:hardwareAccelerated="true"
+        android:enableOnBackInvokedCallback="false">
+        <meta-data android:name="SDL_ENV.XBE_CAPTURE_DIR" android:value="captures" />
+        <activity android:name="com.splashdown.recomp.LauncherActivity" android:exported="true"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name="com.splashdown.recomp.GameActivity" android:exported="false"
+            android:screenOrientation="landscape" android:process=":game"
+            android:configChanges="layoutDirection|locale|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density"
+            android:windowSoftInputMode="stateAlwaysHidden|adjustNothing" />
+        <service android:name="org.xberecomp.GameSessionService" android:exported="false"
+            android:process=":game" android:stopWithTask="false" />
+    </application>
+</manifest>

@@ -1,0 +1,50 @@
+# XDK 4531 library data layouts the runtime reads or writes. PARTIAL: each value below is proven by the Splashdown
+# (USA, title 0x4947001B) default.xbe code at the address given. Keys not listed stay unknown and trap where first
+# needed (see runtime/xdk/layout.h). Function addresses are from XbSymbolDatabase's D3D8/4531.inl.
+[layout]
+# D3D8 CDevice, the static device D3D__pDevice points at (0x16EFE0)
+CDevice_Push          = 0x0     # D3DDevice_SetTexture 0x15F042 loads the push pointer [device+0] and compares it with [device+4]
+CDevice_PushThreshold = 0x4     # D3DDevice_SetTexture 0x15F042 compares the push pointer [device+0] with [device+4]
+CDevice_BaseVertex    = 0x1C    # D3DDevice_DrawIndexedVertices 0x15F8FE reads the base vertex index [device+0x1C]
+CDevice_Flags         = 0x8     # D3DDevice_SetPixelShader 0x160CC4 tests [device+8] & 0x10, D3DDevice_Swap 0x161DC8 tests ah & 0x40
+CDevice_Time          = 0x30    # D3DDevice_SetTexture 0x15F013 stores [device+0x30] as the lock time in the resource
+CDevice_Textures      = 0xA78   # D3DDevice_SetTexture 0x15F000 reads [device + stage*4 + 0xA78], 0x15F039 stores [stage]
+CDevice_Palettes      = 0xA88   # D3DDevice_SetPalette 0x15F17D reads [device + stage*4 + 0xA88], 0x15F1B5 stores [stage]
+CDevice_IndexBuffer   = 0x38C   # device teardown 0x1646BE releases [device+0x38C] with the same refcount code as the texture stages; the store is not located yet
+CDevice_Transforms    = 0x750   # D3DDevice_SetTransform 0x15E140 copies 16 dwords to [device + type*64 + 0x750]
+CDevice_RenderTarget  = 0x2070  # D3DDevice_SetRenderTarget 0x15E550 compares and stores [device+0x2070]
+CDevice_Depth         = 0x2074  # D3DDevice_SetRenderTarget 0x15E819 stores the depth surface at [device+0x2074]
+CDevice_BackBuffer    = 0x207C  # D3DDevice_GetBackBuffer 0x15EA9D reads [device + 0x207C] for index 0, D3DDevice_SetRenderTarget 0x15E58E compares with it
+CDevice_FrontBuffer   = 0x2080  # D3DDevice_GetBackBuffer 0x15EA9D reads [device + 0x2080] for index -1 (BackBuffer + 4, as in 5849)
+CDevice_AutoDepth     = 0x2088  # frame buffer reset 0x163B69 releases [device+0x2088] and clears it (BackBuffer + 0xC, as in 5849); the new store is not located yet
+CDevice_SwapCount     = 0x2AD8  # D3DDevice_Swap 0x161DD9 and 0x161E15 read it, 0x161DF6 and 0x161E32 increment it, 0x161E61 returns it
+CDevice_Size          = 0x2B00  # Direct3D_CreateDevice 0x162536 clears 0xAC0 dwords (0x2B00 bytes) of the device on failure
+CDevice_PixelShader   = 0x370   # D3DDevice_SetPixelShader 0x160B34 stores the handle at [device+0x370]
+CDevice_VertexShader  = 0x380   # D3DDevice_SetVertexShader 0x160388 stores the shader at [device+0x380], 0x16038E stores [device+0x384]
+CDevice_ZScale        = 0x450   # D3DDevice_GetViewportOffsetAndScale 0x15CD05 scales (MaxZ - MinZ) by [device+0x450]
+CDevice_SuperSampleX  = 0x458   # D3DDevice_GetViewportOffsetAndScale 0x15CC5E scales viewport X by [device+0x458]
+CDevice_SuperSampleY  = 0x45C   # D3DDevice_GetViewportOffsetAndScale 0x15CC80 scales viewport Y by [device+0x45C]
+CDevice_Viewport      = 0x9D0   # D3DDevice_SetViewport 0x15EFA3 to 0x15EFB5 stores X, Y, Width, Height, MinZ, MaxZ at 0x9D0 to 0x9E4
+CDevice_ScreenSpaceOffset = 0x9E8  # D3DDevice_SetScreenSpaceOffset 0x15F4B3 stores x + 0.53125 at [device+0x9E8], 0x15F4C3 y at +4
+CDevice_VBlankCallback = 0x2444 # D3DDevice_SetVerticalBlankCallback 0x15E2CA stores the callback at [device+0x2444]; XbSymbolDatabase m_VBlankCallback agrees
+CDevice_VBlankCount   = 0x2474  # D3D display-status path 0x161501 reads this counter; 0x161515 conditionally increments it
+CDevice_VBlankEvent   = 0x2448  # D3DDevice_BlockUntilVerticalBlank 0x15E2EB clears [device+0x244C] (SignalState), waits on the event at 0x2448
+# Pixel shader object
+PixelShader_Definition = 0x8  # D3DDevice_SetPixelShader 0x160B9B loads the shader object pointer from [handle+8] and reads its definition fields
+# DSOUND stream object
+CDirectSoundStream_Vtable  = 0x0  # CDirectSoundStream constructor 0x181719 stores the first vtable at [this]
+CDirectSoundStream_Vtable2 = 0x4  # CDirectSoundStream constructor 0x181712 stores the second vtable at [this+4]
+# DSOUND effects image
+EffectsImage_Skip0    = 0x804   # the effects image parser 0x1836B7 adds [image+0x804] (also 0x183936)
+EffectsImage_Skip1    = 0x80C   # the effects image parser 0x1836B1 loads [image+0x80C] (also 0x183948)
+EffectsImage_Desc     = 0x818   # the effects image parser 0x1836C0 takes the descriptor at image + 0x818 + (Skip0 + Skip1) * 4 (also 0x183966)
+# XAPI XPP device type record
+XPP_Current           = 0x0     # XGetDevices 0x1CD870 reads the current mask from [record], XGetDeviceChanges 0x1CD8B1 reads it
+XPP_Changed           = 0x4     # XGetDevices 0x1CD872 clears [record+4], XGetDeviceChanges 0x1CD890 tests it
+XPP_Previous          = 0x8     # XGetDevices 0x1CD878 copies Current into [record+8], XGetDeviceChanges 0x1CD8A9 reads it
+# D3D8 globals
+DirtyFlags_Texture    = 0x4800  # D3DDevice_SetTexture 0x15F06F ors it into D3D__DirtyFlags (0x16BD78)
+TextureState_Stage    = 32      # D3DDevice_SetTextureStageStateNotInline 0x15D63B shifts the stage by 5 (stage * 32 dwords)
+Stream_Size           = 12      # D3DDevice_SetStreamSource 0x15FF2D indexes the stream table (D3D_g_Stream 0x16C1E0) by n * 12
+Stream_Stride         = 0x0     # D3DDevice_SetStreamSource 0x15FF66 compares and stores the stride at the entry's +0
+Stream_Buffer         = 0x8     # D3DDevice_SetStreamSource 0x15FF78 stores the vertex buffer at the entry's +8 (0x16C1E8)

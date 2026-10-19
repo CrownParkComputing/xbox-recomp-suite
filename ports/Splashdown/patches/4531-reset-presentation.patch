@@ -1,0 +1,306 @@
+--- a/runtime/xdk/d3d8.cpp
++++ b/runtime/xdk/d3d8.cpp
+@@ -87,7 +87,9 @@
+ 
+ std::unordered_map<uint32_t, std::shared_ptr<gpu::VertexShader>> g_vs;
+ std::unordered_map<uint32_t, std::shared_ptr<gpu::PixelShader>> g_ps;
+-std::shared_ptr<gpu::VertexShader> g_direct_vs_program;
++std::unordered_map<uint32_t, std::shared_ptr<gpu::VertexShader>> g_direct_vs_programs;
++uint32_t g_direct_vs_address = 0;
++bool g_direct_vs_active = false;
+ std::array<uint32_t, 3> g_buffers{};  // front, back surfaces
+ uint32_t g_buffer_count = 2;
+ uint32_t g_depth = 0;
+@@ -99,6 +101,27 @@
+ 
+ uint32_t Dev(uint32_t off) { return R32(kDevice + off); }
+ void SetDev(uint32_t off, uint32_t v) { W32(kDevice + off, v); }
++
++// Recompiled Reset rebuilds the device's surfaces without going through CreateDevice.
++// Follow its pointer table before using the swap chain, including changes in buffer count.
++// The table is back, front, then additional back buffers; g_buffers is front first.
++void SyncPresentationBuffers() {
++    if constexpr (!XDK_CDevice_EmbeddedBuffers && XDK_CDevice_BufferCount != xdk::kUnknown) {
++        const uint32_t count = Dev(XDK_CDevice_BufferCount);
++        if (count < 2 || count > g_buffers.size()) return;
++        std::array<uint32_t, 3> buffers{};
++        buffers[0] = Dev(kDevFrontBuffer);
++        buffers[1] = Dev(kDevBackBuffer);
++        for (uint32_t i = 2; i < count; ++i) buffers[i] = Dev(kDevBackBuffer + i * 4);
++        for (uint32_t i = 0; i < count; ++i)
++            if (!buffers[i]) return;
++        if (buffers != g_buffers || count != g_buffer_count) {
++            LOG_FIRST(8, "d3d: reset swap chain: %u surfaces, back %08X front %08X", count, buffers[1], buffers[0]);
++            g_buffers = buffers;
++            g_buffer_count = count;
++        }
++    }
++}
+ 
+ // the device's current shader object, as the library's SetVertexShader keeps it and its inlined code reads it (a
+ // programmable shader's record, else the fixed function one): never null, the library reads through it
+@@ -461,7 +484,11 @@
+     SetDev(kDevDepth, g_depth);
+     if constexpr (!XDK_CDevice_EmbeddedBuffers) {
+         SetDev(kDevBackBuffer, g_buffers[1]);
+-        SetDev(kDevFrontBuffer, g_buffers[1]);
++        SetDev(kDevFrontBuffer, g_buffers[0]);
++        if constexpr (XDK_CDevice_BufferCount != xdk::kUnknown) {
++            SetDev(XDK_CDevice_BufferCount, g_buffer_count);
++            for (uint32_t i = 2; i < g_buffer_count; ++i) SetDev(kDevBackBuffer + i * 4, g_buffers[i]);
++        }
+     }
+     float one = 1.0f, zs = g_depth && (R32(g_depth + 12) >> 8 & 0xFF) == 0x30 ? 65535.0f : 16777215.0f;
+     std::memcpy(HostPtr(kDevice + kDevSuperX), &one, 4);
+@@ -616,6 +643,7 @@
+ // fade from it at its first frames
+ HLE_STDCALL(D3DDevice_PersistDisplay, 0) {
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
++    SyncPresentationBuffers();
+     uint32_t front = g_buffers[0], size = R32(front + 0x10);
+     uint32_t pitch = ((size >> 24 & 0xFF) + 1) * 64, height = (size >> 12 & 0xFFF) + 1, bytes = pitch * height;
+     uint32_t data = mem::VirtualFromPhysical(R32(front + 4));
+@@ -668,6 +696,8 @@
+ }
+ 
+ HLE_STDCALL(D3DDevice_GetBackBuffer2, 1) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    SyncPresentationBuffers();
+     int32_t i = int32_t(a[0]);
+     uint32_t s = i < 0 ? g_buffers[0] : g_buffers[std::min<uint32_t>(uint32_t(i) + 1, g_buffer_count - 1)];
+     W32(s, R32(s) + 1);
+@@ -714,6 +744,7 @@
+         }
+     }
+     Walk(Dev(kDevPush));  // reports asked for at the end of the frame
++    SyncPresentationBuffers();
+     gpu::Surface presented = SurfaceOf(g_buffers[1]);
+     if (g_movie_frame.data) {
+         if (g_movie_frame.age++ > 4) {
+@@ -726,6 +757,10 @@
+                 const uint32_t bytes = std::min({g_movie_frame.width * 4, g_movie_frame.pitch,
+                                                  desc.pitch - g_movie_frame.x * 4});
+                 if (rows && bytes) {
++                    // Finish queued draws before the CPU replaces their target with the decoded movie.
++                    // Otherwise the render thread can consume this write, then clear/draw over it
++                    // before Present gets a chance to upload the movie pixels.
++                    if (g_backend) g_backend->Flush();
+                     const auto* src = static_cast<const uint8_t*>(HostPtr(g_movie_frame.data +
+                                                                           g_movie_frame.y * g_movie_frame.pitch +
+                                                                           g_movie_frame.x * 4));
+@@ -1076,8 +1111,8 @@
+     Walk(Dev(kDevPush));
+     const uint32_t header = a[0] ? R32(a[0]) : 0;
+     const uint32_t instructions = header >> 16;
+-    if (!a[0] || !instructions || instructions > 64) {
+-        g_direct_vs_program.reset();
++    if (!a[0] || !instructions || a[1] >= 136 || instructions > 136 - a[1]) {
++        g_direct_vs_programs.erase(a[1]);
+         LOG_FIRST(4, "d3d: invalid vertex program %08X header %08X", a[0], header);
+         return 0;
+     }
+@@ -1085,7 +1120,23 @@
+     vs->program_type = header & 0xFFFF;
+     vs->program.reserve(instructions * 4);
+     for (uint32_t i = 0; i < instructions * 4; ++i) vs->program.push_back(R32(a[0] + 4 + i * 4));
+-    g_direct_vs_program = std::move(vs);
++    g_direct_vs_programs[a[1]] = vs;
++    // Loading microcode replaces the active program even when the title keeps
++    // its declaration bound and therefore does not call SelectVertexShader.
++    if (g_direct_vs_active && a[1] == g_direct_vs_address && g_state.vs) {
++        const auto& bound = *g_state.vs;
++        auto active = std::make_shared<gpu::VertexShader>();
++        active->handle = bound.handle;
++        active->pretransformed = bound.pretransformed;
++        active->decl = bound.decl;
++        active->inputs = bound.inputs;
++        active->stream_stride = bound.stream_stride;
++        active->constants = bound.constants;
++        active->program = vs->program;
++        active->program_type = vs->program_type;
++        // Do not copy the old hash, which the render thread may still compute.
++        g_state.vs = std::move(active);
++    }
+     return 0;
+ }
+ 
+@@ -1093,6 +1144,7 @@
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
+     Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
+     uint32_t h = a[0];
++    g_direct_vs_active = false;
+     g_state.vs_handle = h;
+     g_state.vs = nullptr;
+     StoreCurrentShader(h);
+@@ -1152,6 +1204,7 @@
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
+     Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
+     const uint32_t handle = a[0];
++    g_direct_vs_active = false;
+     if (!handle) {
+         g_state.vs_handle = 0;
+         g_state.vs.reset();
+@@ -1164,14 +1217,15 @@
+         StoreCurrentShader(handle);
+         return 0;
+     }
+-    if (!(handle & 1) || !g_direct_vs_program) {
++    auto program = g_direct_vs_programs.find(a[1]);
++    if (!(handle & 1) || program == g_direct_vs_programs.end()) {
+         LOG_FIRST(4, "d3d: SelectVertexShader %08X at %u has no loaded program", handle, a[1]);
+         return 0;
+     }
+ 
+     // SelectVertexShaderDirect stores sixteen {stream, offset, type, reserved} descriptors at
+     // (handle & ~1) + 0x14. LoadVertexShaderProgram supplies the corresponding VSH bytecode.
+-    auto vs = std::make_shared<gpu::VertexShader>(*g_direct_vs_program);
++    auto vs = std::make_shared<gpu::VertexShader>(*program->second);
+     vs->handle = handle;
+     vs->inputs.fill({});
+     vs->stream_stride.fill(0);
+@@ -1190,6 +1244,8 @@
+     }
+     g_state.vs_handle = handle;
+     g_state.vs = std::move(vs);
++    g_direct_vs_address = a[1];
++    g_direct_vs_active = true;
+     StoreCurrentShader(handle);
+     if (XDK_CDevice_VertexShader != xdk::kUnknown) SetDev(XDK_CDevice_VertexShader, handle & ~1u);
+     return 0;
+@@ -1411,6 +1467,8 @@
+ }
+ 
+ std::vector<uint32_t> g_inline;  // inline array dwords of the open primitive
++std::vector<uint16_t> g_inline_indices;  // ARRAY_ELEMENT16/32 in the open primitive
++std::vector<std::pair<uint32_t, uint32_t>> g_array_ranges;  // DRAW_ARRAYS first/count
+ 
+ // an immediate vertex attribute method into its slot of g_im_attr, the vertex taken when slot 0's last component
+ // comes; false for any other method
+@@ -1449,6 +1507,20 @@
+ 
+ // the primitive a begin opened, ended: its inline array in the bound vertex format, or its immediate vertices
+ void EndCommandPrimitive() {
++    if (!g_inline_indices.empty() || !g_array_ranges.empty()) {
++        SyncDeferred();
++        if (g_backend && g_im_prim) {
++            if (!g_inline_indices.empty())
++                g_backend->Draw(g_state, g_im_prim, 0, uint32_t(g_inline_indices.size()),
++                                reinterpret_cast<const uint8_t*>(g_inline_indices.data()));
++            for (const auto& [first, count] : g_array_ranges)
++                g_backend->Draw(g_state, g_im_prim, first, count, nullptr);
++        }
++        g_inline_indices.clear();
++        g_array_ranges.clear();
++        g_im_prim = 0;
++        return;
++    }
+     if (g_inline.empty()) {
+         EndPrimitive();
+         return;
+@@ -1486,6 +1558,8 @@
+             g_im_mask = 0;
+             g_im_vertices.clear();
+             g_inline.clear();
++            g_inline_indices.clear();
++            g_array_ranges.clear();
+         } else {
+             EndCommandPrimitive();
+         }
+@@ -1493,6 +1567,23 @@
+     }
+     if (m == kInlineArray) {
+         if (g_im_prim) g_inline.push_back(v);
++        return;
++    }
++    if (m == 0x1800 && g_im_prim) {  // ARRAY_ELEMENT16: two indices per word
++        g_inline_indices.push_back(uint16_t(v));
++        g_inline_indices.push_back(uint16_t(v >> 16));
++        return;
++    }
++    if (m == 0x1808 && g_im_prim) {  // ARRAY_ELEMENT32, also used for an odd final index
++        g_inline_indices.push_back(uint16_t(v));
++        return;
++    }
++    if (m == 0x1810 && g_im_prim) {  // DRAW_ARRAYS: 24-bit first, 8-bit count minus one
++        const uint32_t first = v & 0xFFFFFF, count = (v >> 24) + 1;
++        if (!g_array_ranges.empty() && g_array_ranges.back().first + g_array_ranges.back().second == first)
++            g_array_ranges.back().second += count;
++        else
++            g_array_ranges.emplace_back(first, count);
+         return;
+     }
+     if (ImmediateAttribute(m, v)) return;
+@@ -1529,6 +1620,45 @@
+     return 0;
+ }
+ 
++#if HAS_D3DDevice_DrawIndexedVerticesUP
++HLE_STDCALL(D3DDevice_DrawIndexedVerticesUP, 5) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    Walk(Dev(kDevPush));
++    const uint32_t count = a[1], indices = a[2], vertices = a[3], stride = a[4];
++    if (!count) return 0;
++    if (!indices || !vertices || !stride || uint64_t(count) * stride > kUpHalf) return 0x8876086C;
++    // Expand in index order into the same transient stream as DrawVerticesUP. This
++    // preserves strips/fans/quads and snapshots caller-owned vertices before returning.
++    // The guest copy routine depends on private XDK vertex-packing tables, which
++    // are bypassed when the host binds its own declarations and programs.
++    static std::vector<uint8_t> packed;
++    packed.resize(size_t(count) * stride);
++    for (uint32_t i = 0; i < count; ++i) {
++        const uint32_t index = G<uint16_t>(indices + i * 2);
++        std::memcpy(packed.data() + size_t(i) * stride, HostPtr(vertices + index * stride), stride);
++    }
++    DrawUp(a[0], count, packed.data(), stride);
++    return 0;
++}
++#endif
++
++#if HAS_D3DDevice_RunPushBuffer
++HLE_STDCALL(D3DDevice_RunPushBuffer, 2) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    Walk(Dev(kDevPush));
++    if (!a[0]) return 0x8876086C;
++    if (a[1]) {
++        LOG_FIRST(8, "d3d: RunPushBuffer fixups are not supported (%08X)", a[1]);
++        return 0x80004001;
++    }
++    const uint32_t data = mem::VirtualFromPhysical(R32(a[0] + 4)), bytes = R32(a[0] + 12);
++    if (!data || bytes < 4 || (bytes & 3) || data + bytes < data) return 0x8876086C;
++    // Size includes the final hardware return/jump word, which is not a method packet.
++    Execute(data, data + bytes - 4, true);
++    return 0;
++}
++#endif
++
+ // BeginPush(dwords) hands out room for raw hardware commands, EndPush(end) runs what the title wrote there:
+ // Execute reads it as Walk does, and its simple states as the title set them.
+ HLE_STDCALL(D3DDevice_BeginPush, 1) {
+--- a/runtime/xdk/layout.h
++++ b/runtime/xdk/layout.h
+@@ -77,6 +77,9 @@
+ #endif
+ #ifndef XDK_CDevice_FrontBuffer
+ #define XDK_CDevice_FrontBuffer 0xFFFFFFFFu
++#endif
++#ifndef XDK_CDevice_BufferCount
++#define XDK_CDevice_BufferCount 0xFFFFFFFFu
+ #endif
+ #ifndef XDK_CDevice_SwapCount
+ #define XDK_CDevice_SwapCount 0xFFFFFFFFu
+--- a/xdk/4531/layout.toml
++++ b/xdk/4531/layout.toml
+@@ -14,10 +14,13 @@
+ CDevice_Transforms    = 0x750   # D3DDevice_SetTransform 0x15E140 copies 16 dwords to [device + type*64 + 0x750]
+ CDevice_RenderTarget  = 0x2070  # D3DDevice_SetRenderTarget 0x15E550 compares and stores [device+0x2070]
+ CDevice_Depth         = 0x2074  # D3DDevice_SetRenderTarget 0x15E819 stores the depth surface at [device+0x2074]
++CDevice_BufferCount   = 0x2078  # frame buffer reset 0x163C39 stores BackBufferCount + 1; 0x163B4A bounds the surface-pointer array
+ CDevice_BackBuffer    = 0x207C  # D3DDevice_GetBackBuffer 0x15EA9D reads [device + 0x207C] for index 0, D3DDevice_SetRenderTarget 0x15E58E compares with it
+ CDevice_FrontBuffer   = 0x2080  # D3DDevice_GetBackBuffer 0x15EA9D reads [device + 0x2080] for index -1 (BackBuffer + 4, as in 5849)
+ CDevice_AutoDepth     = 0x2088  # frame buffer reset 0x163B69 releases [device+0x2088] and clears it (BackBuffer + 0xC, as in 5849); the new store is not located yet
+ CDevice_SwapCount     = 0x2AD8  # D3DDevice_Swap 0x161DD9 and 0x161E15 read it, 0x161DF6 and 0x161E32 increment it, 0x161E61 returns it
++CDevice_GammaRamps    = 0x2498  # SetGammaRamp 0x15E070 copies to device+0x227C+0x21C+slot*0x300; GetGammaRamp 0x15E0C7 reads device+0x2498+slot*0x300
++CDevice_GammaPending  = 0x2A98  # SetGammaRamp 0x15E09E sets device+0x227C+0x81C+slot*4 for the next swap
+ CDevice_Size          = 0x2B00  # Direct3D_CreateDevice 0x162536 clears 0xAC0 dwords (0x2B00 bytes) of the device on failure
+ CDevice_PixelShader   = 0x370   # D3DDevice_SetPixelShader 0x160B34 stores the handle at [device+0x370]
+ CDevice_VertexShader  = 0x380   # D3DDevice_SetVertexShader 0x160388 stores the shader at [device+0x380], 0x16038E stores [device+0x384]
