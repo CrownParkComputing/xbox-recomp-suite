@@ -33,7 +33,7 @@ for name in files:
         errors.append("private file: " + name)
     if any(p in {".local", ".git", ".aws", ".codex", ".agents"} for p in path.parts):
         errors.append("private metadata: " + name)
-    if path.parts[0] in {"dist", "out", "build"}:
+    if path.parts[0] in {"dist", "out", "build", "assets", "generated", "hdd", "logs", "CrashDumps", "cap", "captures"}:
         errors.append("build product: " + name)
     if path.parts[0] == "ports" and len(path.parts) > 2 and path.parts[2] in private_dirs:
         errors.append("private port input/output: " + name)

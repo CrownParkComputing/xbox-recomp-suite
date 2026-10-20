@@ -716,7 +716,8 @@ void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(em * 50, em * 32), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(std::min(em * 50, vp->WorkSize.x - em * 2),
+                                  std::min(em * 32, vp->WorkSize.y - em * 2)), ImGuiCond_Always);
     for (const auto& [col, color] : kPanelColors) ImGui::PushStyleColor(col, color);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -796,7 +797,9 @@ bool MenuOpen() { return g_open.load(std::memory_order_relaxed); }
 bool Capturing() { return g_capture >= 0; }
 
 void ToggleMenu() {
+    std::lock_guard lock(UiLock());
     bool open = !MenuOpen();
+    SetGraphicsMenuOpen(open);
     g_open.store(open, std::memory_order_relaxed);
     g_capture = -1;
     g_display_held = false;
@@ -810,7 +813,12 @@ void DrawUi(double fps) {
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     io.KeyRepeatRate = 0.1f;  // held arrows step ten times a second, ImGui's twenty is too fast for settings
     // scale the font with the output height
+#ifdef __ANDROID__
+    // The shared Android host already rasterizes a doubled font and style.
+    io.FontGlobalScale = 1.0f;
+#else
     io.FontGlobalScale = std::max(1.0f, io.DisplaySize.y / 720.0f);
+#endif
     if (MenuOpen()) {
         PollCapture();
         DrawPanel();

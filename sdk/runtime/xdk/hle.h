@@ -99,6 +99,7 @@ inline uint32_t Call(X86Context& ctx, uint32_t fn, const Map& m, std::initialize
     static uint32_t fn(X86Context& ctx, const A& a);     \
     X86_FUNC(guest) {                                    \
         (void)base;                                      \
+        ::kernel::HostPausePoint(ctx);                   \
         A args{ctx};                                     \
         uint32_t r = fn(ctx, args);                      \
         ::kernel::Return(ctx, r, pops);                  \
@@ -129,6 +130,7 @@ inline uint32_t Call(X86Context& ctx, uint32_t fn, const Map& m, std::initialize
     X86_EXTERN_FUNC(orig);                           \
     static void fn(X86Context& ctx, const A& a);     \
     X86_FUNC(guest) {                                \
+        ::kernel::HostPausePoint(ctx);               \
         fn(ctx, A{ctx});                             \
         orig(ctx, base);                             \
     }                                                \

@@ -5,6 +5,9 @@
 #include <atomic>
 #include <mutex>
 #include <vector>
+#include <algorithm>
+#include "core/host_pause.h"
+#include "audio/limiter.h"
 
 #include "audio/fold.h"
 #include "audio/output.h"
@@ -64,12 +67,15 @@ void SDLCALL Feed(void* user, SDL_AudioStream* stream, int additional, int) {
     o.out.resize(size_t(kBlock) * kChannels);
     int bytes_per_frame = int(o.outputs * sizeof(float));
     for (int have = 0; have < additional; have += int(kBlock) * bytes_per_frame) {
-        o.render(o.mix.data(), kBlock);
+        if (host::Pause().Paused()) std::fill(o.mix.begin(), o.mix.end(), 0.0f);
+        else o.render(o.mix.data(), kBlock);
         const float* data = o.mix.data();
         if (!o.fold.empty()) {
             ApplyMatrix(o.fold, o.outputs, o.mix.data(), o.out.data(), kBlock);
             data = o.out.data();
         }
+        static PeakLimiter limiter;
+        limiter.Process(const_cast<float*>(data), kBlock, kRate, o.outputs);
         SDL_PutAudioStreamData(stream, data, int(kBlock) * bytes_per_frame);
     }
 }

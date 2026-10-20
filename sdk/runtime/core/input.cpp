@@ -103,10 +103,6 @@ Pad Poll(int port) {
                 SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_START,     SDL_GAMEPAD_BUTTON_BACK,
                 SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK};
             for (int i = 0; i < 8; i++) p.buttons |= uint16_t(SDL_GetGamepadButton(pad, kButtons[i]) << i);
-#ifdef __ANDROID__
-            // R3 belongs to the host panel, including the press that closes it.
-            if (!app::kGame.ui) p.buttons &= ~uint16_t(1u << 7);
-#endif
             // A B X Y black white
             constexpr SDL_GamepadButton kAnalog[] = {SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST,
                                                      SDL_GAMEPAD_BUTTON_WEST,  SDL_GAMEPAD_BUTTON_NORTH,
@@ -132,6 +128,8 @@ Pad Poll(int port) {
         p.connected = true;
     }
 #endif
+    // R3 is reserved for settings, including the press which resumes.
+    p.buttons &= ~uint16_t(1u << 7);
     if (app::kGame.pad) app::kGame.pad(port, p);
     if (app::GraphicsMenuOpen()) p = Pad{.connected = p.connected};
     return p;

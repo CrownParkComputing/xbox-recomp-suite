@@ -114,7 +114,7 @@
  // ReadFileEx/WriteFileEx pass the completion routine as APC context and the
 --- a/runtime/xdk/d3d8.cpp
 +++ b/runtime/xdk/d3d8.cpp
-@@ -382,6 +382,45 @@
+@@ -383,6 +383,45 @@
  
  gpu::State& State() { return g_state; }
  std::recursive_mutex& Lock() { return g_lock; }
@@ -343,7 +343,7 @@
      return 0;
  }
  BUFFER(SetFilter, 2) { return 0; }
-@@ -806,6 +884,7 @@
+@@ -809,6 +887,7 @@
  BUFFER(SetFormat, 2) {
      ReadFormat(v, a[1]);
      v.freq = 0;
@@ -351,7 +351,7 @@
      v.block = -1;
      return 0;
  }
-@@ -874,6 +953,7 @@
+@@ -877,6 +956,7 @@
      FlushStream(v);
      ReadFormat(v, a[1]);
      v.freq = 0;  // the XDK sets the pitch back to the new format's own rate
@@ -359,7 +359,7 @@
      v.block = -1;
      return 0;
  }
-@@ -933,6 +1013,7 @@
+@@ -936,6 +1016,7 @@
  }
  STREAM(SetFrequency, 2) {
      v.freq = a[1];

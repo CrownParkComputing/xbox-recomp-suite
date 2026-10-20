@@ -1,3 +1,4 @@
+#include "core/host_pause.h"
 // The Direct3D 12 backend on a thread of its own. The title's render thread records each call with what the console
 // takes at call time (state changes, resource headers, indices, rects) and goes on; vertex, texture and surface memory
 // are read when the draw runs, as the console's GPU reads them after the call returns. The XDK's fences, busy checks
@@ -445,16 +446,26 @@ private:
 #else
         pthread_setname_np(pthread_self(), "render");
 #endif
+        Surface paused_front{};
+        bool have_front = false;
         for (;;) {
-            Batch* b;
+            Batch* b = nullptr;
             {
                 std::unique_lock lock(m_);
-                cv_.wait(lock, [&] { return stop_ || !queue_.empty(); });
-                if (queue_.empty()) break;
+                cv_.wait_for(lock, std::chrono::milliseconds(16), [&] { return stop_ || !queue_.empty(); });
+                if (stop_ && queue_.empty()) break;
+                if (queue_.empty()) {
+                    lock.unlock();
+                    if (have_front && host::Pause().Paused()) inner_->PresentPaused(paused_front);
+                    continue;
+                }
                 b = queue_.front();
                 queue_.pop_front();
             }
-            for (const Cmd& c : b->cmds) Execute(*b, c);
+            for (const Cmd& c : b->cmds) {
+                Execute(*b, c);
+                if (c.op == Op::Present) { paused_front = c.s1; have_front = true; }
+            }
             uint64_t id = b->id;
             b->cmds.clear();
             b->bytes.clear();

@@ -9,6 +9,7 @@ case "$title" in
     NFSHP2) slug=nfshp2;;
     BLACK) slug=black;;
     PGR1) slug=pgr1;;
+    LARush) slug=larush;;
     *) echo "Unknown title: $title" >&2; exit 2;;
 esac
 adb_command=(adb)

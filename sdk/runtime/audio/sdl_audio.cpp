@@ -3,6 +3,9 @@
 #include <SDL3/SDL.h>
 
 #include <vector>
+#include <algorithm>
+#include "core/host_pause.h"
+#include "audio/limiter.h"
 
 #include "audio/audio.h"
 #include "core/log.h"
@@ -23,7 +26,8 @@ void SDLCALL Feed(void* user, SDL_AudioStream* stream, int additional, int) {
     constexpr int kBytes = int(kFrames * 2 * sizeof(float));
     o.block.resize(kFrames * 2);
     for (int have = 0; have < additional; have += kBytes) {
-        o.render(o.block.data(), kFrames);
+        if (host::Pause().Paused()) std::fill(o.block.begin(), o.block.end(), 0.0f);
+        else o.render(o.block.data(), kFrames);
         SDL_PutAudioStreamData(stream, o.block.data(), kBytes);
     }
 }

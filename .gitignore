@@ -12,6 +12,11 @@
 /dist/
 /build/
 /out/
+/hdd/
+/logs/
+/CrashDumps/
+/cap/
+/captures/
 **/CMakeUserPresets.json
 **/__pycache__/
 *.pyc

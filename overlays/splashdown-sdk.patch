@@ -373,7 +373,7 @@
      if (!XDK_RenderState_3925) return rs;
      for (uint32_t old = 82; old < 144; ++old)
          if (CanonicalRenderState(old) == rs) return old;
-@@ -461,7 +496,11 @@
+@@ -462,7 +497,11 @@
      SetDev(kDevDepth, g_depth);
      if constexpr (!XDK_CDevice_EmbeddedBuffers) {
          SetDev(kDevBackBuffer, g_buffers[1]);
@@ -386,7 +386,7 @@
      }
      float one = 1.0f, zs = g_depth && (R32(g_depth + 12) >> 8 & 0xFF) == 0x30 ? 65535.0f : 16777215.0f;
      std::memcpy(HostPtr(kDevice + kDevSuperX), &one, 4);
-@@ -616,6 +655,7 @@
+@@ -617,6 +656,7 @@
  // fade from it at its first frames
  HLE_STDCALL(D3DDevice_PersistDisplay, 0) {
      std::lock_guard<std::recursive_mutex> lock(g_lock);
@@ -394,7 +394,7 @@
      uint32_t front = g_buffers[0], size = R32(front + 0x10);
      uint32_t pitch = ((size >> 24 & 0xFF) + 1) * 64, height = (size >> 12 & 0xFFF) + 1, bytes = pitch * height;
      uint32_t data = mem::VirtualFromPhysical(R32(front + 4));
-@@ -668,6 +708,8 @@
+@@ -669,6 +709,8 @@
  }
  
  HLE_STDCALL(D3DDevice_GetBackBuffer2, 1) {
@@ -403,7 +403,7 @@
      int32_t i = int32_t(a[0]);
      uint32_t s = i < 0 ? g_buffers[0] : g_buffers[std::min<uint32_t>(uint32_t(i) + 1, g_buffer_count - 1)];
      W32(s, R32(s) + 1);
-@@ -714,6 +756,7 @@
+@@ -715,6 +757,7 @@
          }
      }
      Walk(Dev(kDevPush));  // reports asked for at the end of the frame
@@ -411,7 +411,7 @@
      gpu::Surface presented = SurfaceOf(g_buffers[1]);
      if (g_movie_frame.data) {
          if (g_movie_frame.age++ > 4) {
-@@ -726,6 +769,10 @@
+@@ -727,6 +770,10 @@
                  const uint32_t bytes = std::min({g_movie_frame.width * 4, g_movie_frame.pitch,
                                                   desc.pitch - g_movie_frame.x * 4});
                  if (rows && bytes) {
@@ -422,7 +422,7 @@
                      const auto* src = static_cast<const uint8_t*>(HostPtr(g_movie_frame.data +
                                                                            g_movie_frame.y * g_movie_frame.pitch +
                                                                            g_movie_frame.x * 4));
-@@ -819,7 +866,7 @@
+@@ -820,7 +867,7 @@
      std::lock_guard<std::recursive_mutex> lock(g_lock);
      Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
      uint32_t rs = a[0], v = a[1];
@@ -431,7 +431,7 @@
          uint32_t method = R32(kSimpleEncode + rs * 4) & 0x1FFC;
          g_state.simple[method >> 2] = v;
          W32(kRenderState + rs * 4, v);  // titles read their states back from the library's table
-@@ -1076,8 +1123,8 @@
+@@ -1077,8 +1124,8 @@
      Walk(Dev(kDevPush));
      const uint32_t header = a[0] ? R32(a[0]) : 0;
      const uint32_t instructions = header >> 16;
@@ -442,7 +442,7 @@
          LOG_FIRST(4, "d3d: invalid vertex program %08X header %08X", a[0], header);
          return 0;
      }
-@@ -1085,7 +1132,23 @@
+@@ -1086,7 +1133,23 @@
      vs->program_type = header & 0xFFFF;
      vs->program.reserve(instructions * 4);
      for (uint32_t i = 0; i < instructions * 4; ++i) vs->program.push_back(R32(a[0] + 4 + i * 4));
@@ -467,7 +467,7 @@
      return 0;
  }
  
-@@ -1093,6 +1156,7 @@
+@@ -1094,6 +1157,7 @@
      std::lock_guard<std::recursive_mutex> lock(g_lock);
      Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
      uint32_t h = a[0];
@@ -475,7 +475,7 @@
      g_state.vs_handle = h;
      g_state.vs = nullptr;
      StoreCurrentShader(h);
-@@ -1152,6 +1216,7 @@
+@@ -1153,6 +1217,7 @@
      std::lock_guard<std::recursive_mutex> lock(g_lock);
      Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
      const uint32_t handle = a[0];
@@ -483,7 +483,7 @@
      if (!handle) {
          g_state.vs_handle = 0;
          g_state.vs.reset();
-@@ -1164,14 +1229,15 @@
+@@ -1165,14 +1230,15 @@
          StoreCurrentShader(handle);
          return 0;
      }
@@ -501,7 +501,7 @@
      vs->handle = handle;
      vs->inputs.fill({});
      vs->stream_stride.fill(0);
-@@ -1190,6 +1256,8 @@
+@@ -1191,6 +1257,8 @@
      }
      g_state.vs_handle = handle;
      g_state.vs = std::move(vs);
@@ -510,7 +510,7 @@
      StoreCurrentShader(handle);
      if (XDK_CDevice_VertexShader != xdk::kUnknown) SetDev(XDK_CDevice_VertexShader, handle & ~1u);
      return 0;
-@@ -1411,6 +1479,8 @@
+@@ -1412,6 +1480,8 @@
  }
  
  std::vector<uint32_t> g_inline;  // inline array dwords of the open primitive
@@ -519,7 +519,7 @@
  
  // an immediate vertex attribute method into its slot of g_im_attr, the vertex taken when slot 0's last component
  // comes; false for any other method
-@@ -1449,6 +1519,20 @@
+@@ -1450,6 +1520,20 @@
  
  // the primitive a begin opened, ended: its inline array in the bound vertex format, or its immediate vertices
  void EndCommandPrimitive() {
@@ -540,7 +540,7 @@
      if (g_inline.empty()) {
          EndPrimitive();
          return;
-@@ -1486,6 +1570,8 @@
+@@ -1487,6 +1571,8 @@
              g_im_mask = 0;
              g_im_vertices.clear();
              g_inline.clear();
@@ -549,7 +549,7 @@
          } else {
              EndCommandPrimitive();
          }
-@@ -1493,6 +1579,23 @@
+@@ -1494,6 +1580,23 @@
      }
      if (m == kInlineArray) {
          if (g_im_prim) g_inline.push_back(v);
@@ -573,7 +573,7 @@
          return;
      }
      if (ImmediateAttribute(m, v)) return;
-@@ -1529,6 +1632,45 @@
+@@ -1530,6 +1633,45 @@
      return 0;
  }
  
@@ -639,7 +639,7 @@
      } else if (dist > v.min_dist && v.max_dist > v.min_dist) {
          // points spread evenly from min to max distance, 1.0 at min
          float at = (std::min(dist, v.max_dist) - v.min_dist) / (v.max_dist - v.min_dist) * v.curve.size();
-@@ -492,7 +494,32 @@
+@@ -492,7 +494,29 @@
          SYM(CDirectSoundStream_SetFrequency), SYM(CDirectSoundStream_SetFilter), SYM(CDirectSoundStream_SetHeadroom),
          SYM(CDirectSoundStream_SetMixBinVolumes), SYM(CDirectSoundStream_SetMixBins), SYM(CDirectSoundStream_SetMaxDistance),
          SYM(CDirectSoundStream_SetMinDistance), SYM(CDirectSoundStream_SetPosition), SYM(CDirectSoundStream_SetVelocity),
@@ -653,9 +653,6 @@
 +#endif
 +#if HAS_IDirectSoundBuffer_SetRolloffFactor
 +        SYM(IDirectSoundBuffer_SetRolloffFactor),
-+#endif
-+#if HAS_IDirectSoundBuffer_SetMode
-+        SYM(IDirectSoundBuffer_SetMode),
 +#endif
 +#if HAS_CDirectSoundStream_SetDistanceFactor
 +        SYM(CDirectSoundStream_SetDistanceFactor),
@@ -673,16 +670,10 @@
      std::string left;
      // the library's own section: the WMA decoder shares the export ids and touches no DSOUND object
      uint32_t lo = 0, hi = 0;
-@@ -787,6 +814,30 @@
+@@ -787,6 +811,24 @@
      return 0;
  }
  BUFFER(SetVelocity, 5) { return 0; }
-+#if HAS_IDirectSoundBuffer_SetMode
-+BUFFER(SetMode, 3) {
-+    v.mode = a[1];
-+    return 0;
-+}
-+#endif
 +#if HAS_IDirectSoundBuffer_SetDistanceFactor
 +BUFFER(SetDistanceFactor, 3) {
 +    v.distance_factor = ArgF(a, 1);
@@ -704,7 +695,7 @@
  BUFFER(SetI3DL2Source, 3) { return 0; }
  // (this, DS3DBUFFER, apply): position at +4, distances at +0x34 and +0x38, mode at +0x3C
  BUFFER(SetAllParameters, 3) {
-@@ -963,4 +1014,28 @@
+@@ -970,4 +1012,28 @@
      return 0;
  }
  STREAM(SetVelocity, 5) { return 0; }

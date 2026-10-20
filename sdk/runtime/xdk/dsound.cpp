@@ -790,6 +790,9 @@ BUFFER(SetVelocity, 5) { return 0; }
 BUFFER(SetI3DL2Source, 3) { return 0; }
 // (this, DS3DBUFFER, apply): position at +4, distances at +0x34 and +0x38, mode at +0x3C
 BUFFER(SetAllParameters, 3) {
+    if (!a[1]) return 0x80070057;
+    const float lo = F32(R32(a[1] + 0x34)), hi = F32(R32(a[1] + 0x38));
+    if (!std::isfinite(lo) || !std::isfinite(hi) || lo <= 0 || hi <= 0 || R32(a[1] + 0x3C) > 2) return 0x80070057;
     for (int i = 0; i < 3; i++) v.p[i] = F32(R32(a[1] + 4 + i * 4));
     v.min_dist = F32(R32(a[1] + 0x34));
     v.max_dist = F32(R32(a[1] + 0x38));
@@ -951,11 +954,15 @@ STREAM(SetMixBins, 2) {
     return 0;
 }
 STREAM(SetMaxDistance, 3) {
-    v.max_dist = F32(a[1]);
+    const float distance = F32(a[1]);
+    if (!std::isfinite(distance) || distance <= 0) return 0x80070057;
+    v.max_dist = distance;
     return 0;
 }
 STREAM(SetMinDistance, 3) {
-    v.min_dist = F32(a[1]);
+    const float distance = F32(a[1]);
+    if (!std::isfinite(distance) || distance <= 0) return 0x80070057;
+    v.min_dist = distance;
     return 0;
 }
 STREAM(SetPosition, 5) {

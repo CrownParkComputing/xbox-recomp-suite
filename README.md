@@ -87,3 +87,5 @@ source state recorded in [`SOURCE_PROVENANCE.json`](SOURCE_PROVENANCE.json).
 Original credits, copyright headers, licenses, and per-project notes are retained.
 See [`THIRD_PARTY.md`](THIRD_PARTY.md) for component notices. Bundling these
 components does not change their individual licenses.
+
+R3 opens settings and pauses gameplay, game clocks and audio on Linux and Android. R3 closes the panel and resumes; F10 also works on Linux. BLACK keeps its own panel with the same pause behaviour.

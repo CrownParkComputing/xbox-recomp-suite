@@ -154,7 +154,7 @@ const app::GameInfo app::kGame = {
     .splash = L"BlackLogo",
     .missing = L"Put the game in the assets folder: its disc image (.iso), or default.xbe with GlobData.bin and the "
                L"chars, data, export, language, levels, sound and videos folders beside it.",
-    .images = {{"default.xbe", "Black"}},
+    .images = {{"default.xbe", "BLACK"}},
     .options = {{"skip_intros", &game::Opt().skip_intros, nullptr},
                 {"fps_counter", &game::Opt().fps_counter, nullptr},
                 {"reload_blur", &game::Opt().reload_blur, nullptr},
@@ -181,4 +181,5 @@ const app::GameInfo app::kGame = {
     .pad = game::Pad,
     .rumble = game::Rumble,
     .keyboard_pad = false,  // src/common/mouse_keyboard.cpp: its own keyboard and mouse controls
+    .toggle_menu = app::ToggleMenu,
 };

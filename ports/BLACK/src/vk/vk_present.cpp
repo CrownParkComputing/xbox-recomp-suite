@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "app/app.h"
+#include "core/host_pause.h"
 #include "common/aspect.h"
 #include "common/options.h"
 #include "core/diag.h"
@@ -107,6 +108,7 @@ void VulkanBackend::RenderUi(Image& into) {
     if (!ui_ready_) return;
     BeginRendering({&into, nullptr}, into.desc.w, into.desc.h);
     std::lock_guard lock(app::UiLock());
+    host::Pause().FrameReady();
     app::UiNewFrame();
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
@@ -406,17 +408,19 @@ void VulkanBackend::Present(const Surface& front) {
     }
     if (bb) DrawFrame(t, bb);
     Submit(false, acquired, done);
-    present_fence_[presents_ % (kFrames + 1)].store(fence_value_);
+    if (!paused_present_) present_fence_[presents_ % (kFrames + 1)].store(fence_value_);
     if (bb) swap_->Present(index, done);
 
-    presents_++;
-    presents_seen_.store(presents_);
+    if (!paused_present_) {
+        presents_++;
+        presents_seen_.store(presents_);
+    }
     frame_++;
     ReleaseOldTextures();
     ResetFrame();
     CountFps();
     if (diag::Perf()) LogPerf();
-    ApplySettings();
+    if (!host::Pause().Paused()) ApplySettings();
 }
 
 }  // namespace gpu::vk

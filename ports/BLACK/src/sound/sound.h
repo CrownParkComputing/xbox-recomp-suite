@@ -62,6 +62,7 @@ struct Voice {
     // play region in bytes from data, loop region in bytes from the play region
     uint32_t data = 0;
     uint32_t bytes = 0;
+    uint32_t output_buffer = 0;
     uint32_t loop_start = 0;
     uint32_t loop_len = 0;
     uint32_t play_start = 0;
@@ -165,6 +166,19 @@ inline void Deactivate(Voice& v) {
 inline Voice* Find(uint32_t obj) {
     auto it = g_voices.find(obj);
     return it == g_voices.end() ? nullptr : &it->second;
+}
+
+inline uint32_t RouteOutput(uint32_t object, uint32_t output) {
+    std::lock_guard lock(g_lock);
+    Voice* voice = Find(object);
+    if (!voice || (output && !Find(output))) return 0x80070057;
+    for (uint32_t next = output, depth = 0; next; ++depth) {
+        if (next == object || depth >= 32) return 0x80070057;
+        const Voice* bus = Find(next);
+        next = bus ? bus->output_buffer : 0;
+    }
+    voice->output_buffer = output;
+    return 0;
 }
 
 inline float F32(uint32_t v) {

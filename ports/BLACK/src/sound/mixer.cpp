@@ -201,7 +201,7 @@ void PlaceBin(uint32_t bin, float x, float g[kOuts]) {
 // Gain of each row on host left and right and into the reverb.
 // Rows are the voice's channels, or the two ears and the voice itself for a mono 3D voice. A hardware voice
 // holds two channels and owns a run of slots, which alternate between them.
-Gains Levels(const Voice& v, const Place& at) {
+Gains LocalLevels(const Voice& v, const Place& at) {
     static const uint8_t kFront[2] = {0, 1};
     const uint8_t* bin = v.nbins ? v.bin : kFront;
     uint32_t n = v.nbins ? v.nbins : 2;
@@ -243,6 +243,31 @@ Gains Levels(const Voice& v, const Place& at) {
         if (!std::isfinite(g.send[r])) g.send[r] = 0;
     }
     return g;
+}
+
+Gains Levels(const Voice& v, const Place& at) {
+    Gains gain = LocalLevels(v, at);
+    for (uint32_t output = v.output_buffer, depth = 0; output && depth < 32; ++depth) {
+        const Voice* bus = Find(output);
+        if (!bus) break;
+        const Place placed = Locate(*bus);
+        const Gains routed = LocalLevels(*bus, placed);
+        const float master = bus->volume * bus->headroom * placed.att;
+        for (uint32_t row = 0; row < kRows; ++row) {
+            for (uint32_t channel = 0; channel < kOuts; ++channel) {
+                float level = master;
+                if (bus->nbins) {
+                    level = 0;
+                    for (uint32_t source = 0; source < kRows; ++source)
+                        level = std::max(level, routed.out[source][channel]);
+                }
+                gain.out[row][channel] *= level;
+            }
+            gain.send[row] *= master;
+        }
+        output = bus->output_buffer;
+    }
+    return gain;
 }
 
 // 3D levels follow the listener once a game frame: stepped per block, a fast turn clicks

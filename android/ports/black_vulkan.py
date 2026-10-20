@@ -32,21 +32,6 @@ def stage_vulkan(source: Path, sdk: Path, stage: Path):
 """
     header = once(header, "    void SetViewport(", prototypes + "    void SetViewport(")
     fields = sdk_header[sdk_header.index("    struct FbKey {"):sdk_header.index("    std::unordered_map<uint64_t, VkSampler> samplers_;")]
-    fields = once(fields, "        uint32_t w = 0, h = 0;", "        uint32_t w = 0, h = 0;\n        bool swapchain = false;")
-    helpers = once(helpers, "    key.w = w;", "    key.swapchain = a.color && !a.color->alloc;\n    key.w = w;")
-    helpers += """// Swapchain recreation occurs after guest drawing, before presentation. Preserve
-// offscreen framebuffers referenced by the command buffer still being recorded.
-void VulkanBackend::DropSwapchainFramebuffers() {
-    for (auto& cache : framebuffers_) {
-        for (auto it = cache.begin(); it != cache.end();) {
-            if (!it->first.swapchain) { ++it; continue; }
-            if (it->second) vkDestroyFramebuffer(ctx_.dev, it->second, nullptr);
-            it = cache.erase(it);
-        }
-    }
-}
-
-"""
     header = once(header, "    std::unordered_map<uint64_t, VkSampler> samplers_;",
                   fields + "    std::unordered_map<uint64_t, VkSampler> samplers_;")
     include = stage / "include/vk"
@@ -65,7 +50,6 @@ void VulkanBackend::DropSwapchainFramebuffers() {
     backend = (source / "src/vk/vk_backend.cpp").read_text()
     backend = once(backend, "    vkCmdEndRendering(Cb());",
                    "    if (ctx_.caps.dynamic_rendering) ctx_.d.CmdEndRendering(Cb());\n    else vkCmdEndRenderPass(Cb());")
-    backend = once(backend, "Transition(Cb(), img, to)", "Transition(ctx_, Cb(), img, to)")
     start = backend.index("void VulkanBackend::BeginRendering(")
     end = backend.index("// Direct3D's y up:", start)
     backend = backend[:start] + helpers + backend[end:]

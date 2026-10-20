@@ -51,3 +51,12 @@ TEST("audio: non-finite samples cannot poison the output block") {
     CHECK_EQ(samples[2], 0.f);
     CHECK_EQ(samples[3], -.25f);
 }
+
+TEST("audio: linked surround limiter protects all six channels after folding") {
+    audio::PeakLimiter limiter;
+    float samples[] = {4.f, 2.f, 1.f, -4.f, .5f, -.5f};
+    limiter.Process(samples, 1, 48000, 6);
+    for (float sample : samples) CHECK(std::abs(sample) <= .980001f);
+    CHECK(std::abs(samples[1] * 2 - samples[0]) < 1e-6f);
+    CHECK(std::abs(samples[3] + samples[0]) < 1e-6f);
+}

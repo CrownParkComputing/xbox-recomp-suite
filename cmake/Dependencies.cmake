@@ -7,6 +7,8 @@ foreach(dep zydis tomlplusplus imgui sdl3 vma spirv_headers spirv_tools glslang)
     endif()
 endforeach()
 # DXC is a separately downloaded, hash-pinned executable dependency on Linux.
-if(DEFINED ENV{DXC_SOURCE} AND NOT DEFINED FETCHCONTENT_SOURCE_DIR_DXC)
-    set(FETCHCONTENT_SOURCE_DIR_DXC "$ENV{DXC_SOURCE}" CACHE PATH "Local DXC distribution")
+if(DEFINED ENV{DXC_SOURCE} AND
+   (NOT FETCHCONTENT_SOURCE_DIR_DXC OR NOT EXISTS "${FETCHCONTENT_SOURCE_DIR_DXC}/include/dxc/dxcapi.h"))
+    # Recover both an empty failed-download entry and a removed old build cache.
+    set(FETCHCONTENT_SOURCE_DIR_DXC "$ENV{DXC_SOURCE}" CACHE PATH "Local DXC distribution" FORCE)
 endif()

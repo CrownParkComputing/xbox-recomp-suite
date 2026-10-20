@@ -20,11 +20,11 @@ X86_FUNC(sub_000E66C0) {
     LOGI("native FMV: %s, %dx%d", name.c_str(), movie.Width(), movie.Height());
     CallGuest(ctx, 0xDA9F0, {1});
     using Clock = std::chrono::steady_clock;
-    auto start = Clock::now();
+    auto start = host::GameNow();
     bool started = false, skip = false;
     unsigned frames = 0;
     while (movie.Decode()) {
-        if (!started) { start = Clock::now(); movie.StartAudio(); started = true; }
+        if (!started) { start = host::GameNow(); movie.StartAudio(); started = true; }
         do {
             CallGuest(ctx, 0xC3940, {});
             uint32_t pads = R32(0x15980C);
@@ -36,7 +36,7 @@ X86_FUNC(sub_000E66C0) {
                     skip |= R32(pad + off) != 0;
             }
             if (skip) break;
-            if (std::chrono::duration<double>(Clock::now()-start).count() >= movie.Pts()) break;
+            if (std::chrono::duration<double>(host::GameNow()-start).count() >= movie.Pts()) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         } while (true);
         if (skip) break;

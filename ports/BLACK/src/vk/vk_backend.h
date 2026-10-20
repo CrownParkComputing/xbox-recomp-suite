@@ -166,6 +166,11 @@ public:
     void Draw(const State& s, uint32_t prim, uint32_t start, uint32_t count, const uint8_t* indices) override;
     void Copy(const Surface& src, const Surface& dst, uint32_t count, uint32_t src_rects, uint32_t dst_points) override;
     void Present(const Surface& front) override;
+    void PresentPaused(const Surface& front) override {
+        paused_present_ = true;
+        Present(front);
+        paused_present_ = false;
+    }
     void Sync(uint32_t data, uint32_t size) override;
     void SyncLate(uint32_t data) override;
     bool DeliverLate(uint32_t data) override;
@@ -362,6 +367,7 @@ private:
     VkPipelineCache cache_ = VK_NULL_HANDLE;
     Frame frames_[kFrames];
     uint64_t frame_ = 0;
+    bool paused_present_ = false;
     uint64_t fence_value_ = 0;
     Attachments open_;  // the rendering scope recording now
     bool rendering_ = false;

@@ -228,6 +228,7 @@ uint32_t Suspend(Thread& t) {
 
 void SuspendPoint() {
     Thread* t = Current();
+    if (t && t->ctx) HostPausePoint(*t->ctx);
     if (!t || t->suspend.load() <= 0) return;
     std::unique_lock<std::mutex> lock(t->apc_lock);
     t->resume_cv.wait(lock, [&] { return t->suspend.load() <= 0; });

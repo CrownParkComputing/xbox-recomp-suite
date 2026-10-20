@@ -12,6 +12,7 @@
 #include <string>
 
 #include "app/app.h"
+#include "core/host_pause.h"
 #include "core/diag.h"
 #include "core/log.h"
 #include "gpu/vulkan.h"
@@ -127,6 +128,7 @@ void VulkanRenderer::ShutdownUi() {
 
 // the panel into the target that is already open
 void VulkanRenderer::RenderUi(Image& into) {
+    host::Pause().FrameReady();
     InitUi(into.desc.format);
     if (presents_ < 10)
         LOGI("vulkan: ui ready=%d draw=%p drop=%d", int(ui_ready_), (void*)ImGui::GetDrawData(), int(SkipPart("noui")));
@@ -340,14 +342,16 @@ void VulkanRenderer::Present(const Surface& front) {
     DeliverReports();
     if (bb) swap_->Present(index, done);
 
-    presents_++;
-    presents_seen_.store(presents_);
+    if (!paused_present_) {
+        presents_++;
+        presents_seen_.store(presents_);
+    }
     frame_++;
     ReleaseOldTextures();
     ResetFrame();
     CountFps();
     if (diag::Perf()) LogPerf();
-    ApplySettings();
+    if (!host::Pause().Paused()) ApplySettings();
 }
 
 }  // namespace gpu::vk

@@ -85,11 +85,11 @@ X86_FUNC(sub_001CF400) {
         p.pending = true;
     }
     if (!p.started) {
-        p.start = Clock::now();
+        p.start = host::GameNow();
         p.started = true;
         p.movie.StartAudio();
     }
-    double elapsed = std::chrono::duration<double>(Clock::now() - p.start).count();
+    double elapsed = std::chrono::duration<double>(host::GameNow() - p.start).count();
     if (elapsed < p.movie.Pts()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         return;

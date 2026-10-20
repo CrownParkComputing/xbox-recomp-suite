@@ -154,11 +154,15 @@ BUFFER(SetMixBins, 2) {
     return 0;
 }
 BUFFER(SetMaxDistance, 3) {
-    v.max_dist = F32(a[1]);
+    const float distance = F32(a[1]);
+    if (!std::isfinite(distance) || distance <= 0) return 0x80070057;
+    v.max_dist = distance;
     return 0;
 }
 BUFFER(SetMinDistance, 3) {
-    v.min_dist = F32(a[1]);
+    const float distance = F32(a[1]);
+    if (!std::isfinite(distance) || distance <= 0) return 0x80070057;
+    v.min_dist = distance;
     return 0;
 }
 BUFFER(SetPosition, 5) {
@@ -175,6 +179,9 @@ constexpr uint32_t k3dBufferMode = 0x3C;
 
 // (this, DS3DBUFFER, apply)
 BUFFER(SetAllParameters, 3) {
+    if (!a[1]) return 0x80070057;
+    const float lo = F32(R32(a[1] + k3dBufferMinDistance)), hi = F32(R32(a[1] + k3dBufferMaxDistance));
+    if (!std::isfinite(lo) || !std::isfinite(hi) || lo <= 0 || hi <= 0 || R32(a[1] + k3dBufferMode) > 2) return 0x80070057;
     for (int i = 0; i < 3; i++) v.p[i] = F32(R32(a[1] + k3dBufferPosition + i * 4));
     v.min_dist = F32(R32(a[1] + k3dBufferMinDistance));
     v.max_dist = F32(R32(a[1] + k3dBufferMaxDistance));
@@ -187,7 +194,7 @@ BUFFER(SetRolloffCurve, 4) {
     for (uint32_t i = 0; a[1] && i < std::min<uint32_t>(a[2], 64); i++) v.curve.push_back(F32(R32(a[1] + i * 4)));
     return 0;
 }
-BUFFER(SetOutputBuffer, 2) { return 0; }  // the voice keeps its own mix bins
+BUFFER(SetOutputBuffer, 2) { return RouteOutput(a[0], a[1]); }
 BUFFER(SetFormat, 2) {
     ReadFormat(v, a[1]);
     v.freq = 0;

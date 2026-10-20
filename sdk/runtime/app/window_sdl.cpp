@@ -91,11 +91,11 @@ void ApplyNow() {
 
 // the scancode's virtual key, as the window would have been sent it
 void OnKey(const SDL_KeyboardEvent& k) {
-    if (!kGame.ui && k.scancode == SDL_SCANCODE_F10) {
+    if (k.scancode == SDL_SCANCODE_F10) {
         if (k.down && !k.repeat) ToggleGraphicsMenu();
         return;
     }
-    if (GraphicsMenuOpen()) {
+    if (GraphicsMenuOpen() && !kGame.ui) {
         if (k.down && !k.repeat && k.scancode == SDL_SCANCODE_ESCAPE) ToggleGraphicsMenu();
         return;
     }
@@ -181,14 +181,12 @@ bool Dispatch(const SDL_Event& e) {
             break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_DISPLAY_CHANGED: UpdatePixels(); break;
-#ifdef __ANDROID__
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-            if (!kGame.ui && e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) {
+            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) {
                 ToggleGraphicsMenu();
                 LOGI("input: R3 settings menu %s", GraphicsMenuOpen() ? "opened" : "closed");
             }
             break;
-#endif
         case SDL_EVENT_GAMEPAD_ADDED:
         case SDL_EVENT_GAMEPAD_REMOVED: input::OnDeviceEvent(e.type, e.gdevice.which); break;
         default:

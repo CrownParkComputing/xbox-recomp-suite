@@ -75,8 +75,9 @@ the matching `assets` folder alongside the executable.
 
 Connect a physical controller. SDL maps the sticks, D-pad, face buttons, and
 triggers; R1 maps to Xbox Black, L1 to White, and Select to Back. There is no
-touch overlay on Android. The generic graphics menu uses R3; BLACK has its own
-host UI.
+touch overlay on Android. R3 opens settings and automatically pauses gameplay,
+game clocks and audio. R3 closes settings and resumes. F10 also works on Linux.
+BLACK retains its custom panel and follows the same pause contract.
 
 The desktop runtime writes saves/cache to `hdd/`, logs to `logs/`, and settings
 beside the executable. Back up those folders before replacing or cleaning a
@@ -164,6 +165,5 @@ the lifecycle checks and detailed device notes.
   documented status. Intro playback alone does not establish gameplay support.
 
 The original six ports have device evidence listed in [VERIFICATION.md](VERIFICATION.md).
-L.A. Rush has desktop Story driving and Android SD boot, intro/title and
-fresh-process relaunch evidence. Android driving and full-race testing remain
-pending.
+L.A. Rush has desktop and Android Story driving, SD boot and fresh-process
+relaunch evidence. Full missions and race completion remain unvalidated.

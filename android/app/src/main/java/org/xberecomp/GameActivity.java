@@ -6,9 +6,30 @@ import android.widget.Toast;
 import org.libsdl.app.SDLActivity;
 
 public class GameActivity extends SDLActivity {
-    @Override protected void onCreate(android.os.Bundle state) {
-        super.onCreate(state);
-        startService(new android.content.Intent(this, GameSessionService.class));
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_THUMBR) {
+            // Reserve R3 before SDL's per-device mapping. Some Android pads
+            // expose stick clicks through the keyboard source instead.
+            if (event.getAction() == android.view.KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0)
+                SDLActivity.onNativeKeyDown(android.view.KeyEvent.KEYCODE_F10);
+            else if (event.getAction() == android.view.KeyEvent.ACTION_UP)
+                SDLActivity.onNativeKeyUp(android.view.KeyEvent.KEYCODE_F10);
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused) getWindow().getDecorView().post(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            try {
+                // onCreate can precede Android's foreground UID transition.
+                // This optional task-removal guard must never abort startup.
+                startService(new android.content.Intent(this, GameSessionService.class));
+            } catch (IllegalStateException background) {
+                android.util.Log.i("XbeSession", "Session guard deferred until foreground");
+            }
+        });
     }
 
     @Override protected void onStop() {

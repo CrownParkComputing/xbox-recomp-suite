@@ -72,6 +72,7 @@ uint32_t KernelThunkAddress(uint32_t ordinal) { return kKernelThunkBase + ordina
 }  // namespace dispatch
 
 void x86_icall(X86Context& ctx, uint8_t* base, uint32_t target) {
+    kernel::HostPausePoint(ctx);
     ctx.last_icall = target;
     if (target >= g_lo && target < g_hi && g_continuation[target - g_lo]) throw X86Resume{target, ctx.esp};
     if (X86Func* f = dispatch::Find(target)) {
@@ -213,8 +214,8 @@ void x86_priv(X86Context& ctx, uint32_t va, const char* what) {
 // the guest measured time against a 733.33 MHz time stamp counter
 uint64_t x86_rdtsc() {
     using namespace std::chrono;
-    static const auto start = steady_clock::now();
-    auto ns = duration_cast<nanoseconds>(steady_clock::now() - start).count();
+    static const auto start = host::GameNow();
+    auto ns = duration_cast<nanoseconds>(host::GameNow() - start).count();
     uint64_t sec = uint64_t(ns) / 1000000000ull, rem = uint64_t(ns) % 1000000000ull;
     return sec * 733333333ull + rem * 733333333ull / 1000000000ull;
 }

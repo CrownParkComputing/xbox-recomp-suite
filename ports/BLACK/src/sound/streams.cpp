@@ -156,11 +156,15 @@ STREAM(SetMixBins, 2) {
     return 0;
 }
 STREAM(SetMaxDistance, 3) {
-    v.max_dist = F32(a[1]);
+    const float distance = F32(a[1]);
+    if (!std::isfinite(distance) || distance <= 0) return 0x80070057;
+    v.max_dist = distance;
     return 0;
 }
 STREAM(SetMinDistance, 3) {
-    v.min_dist = F32(a[1]);
+    const float distance = F32(a[1]);
+    if (!std::isfinite(distance) || distance <= 0) return 0x80070057;
+    v.min_dist = distance;
     return 0;
 }
 STREAM(SetPosition, 5) {

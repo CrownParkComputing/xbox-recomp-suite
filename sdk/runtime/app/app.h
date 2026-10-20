@@ -74,6 +74,7 @@ bool CreateVulkanSurface(void* instance, uint64_t* surface);
 void WindowPixels(uint32_t& w, uint32_t& h);  // the window's drawable size, any thread
 bool GraphicsMenuOpen();
 void ToggleGraphicsMenu();
+void SetGraphicsMenuOpen(bool open);  // custom panels share the same pause state
 void DrawGraphicsMenu(double fps);
 void UiNewFrame();  // ImGui's platform frame (display size, time), UiLock held; Windows: ImGui_ImplWin32_NewFrame
 // WM_INPUT's lp on Linux: the relative mouse motion and wheel since the last one, as raw input reports them
@@ -123,6 +124,7 @@ struct GameInfo {
     void (*rumble)(int port, uint16_t& left, uint16_t& right);
     // the keyboard plays as the first controller (core/keyboard_pad.h); off for a game with its own keyboard controls
     bool keyboard_pad = true;
+    void (*toggle_menu)() = nullptr;  // optional title-specific settings panel
 };
 extern const GameInfo kGame;
 

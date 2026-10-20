@@ -1,6 +1,9 @@
 // Shared F10 panel for titles without a custom GameInfo::ui panel.
 #include "app/app.h"
 #include "core/keyboard_pad.h"
+#include "core/host_pause.h"
+#include "core/log.h"
+#include "core/input.h"
 #include <imgui.h>
 #include <atomic>
 #include <algorithm>
@@ -24,15 +27,23 @@ void Choice(const char* label, uint32_t& value, const uint32_t (&values)[N], con
 }
 }
 bool GraphicsMenuOpen() { return open.load(); }
-void ToggleGraphicsMenu() {
-    if (kGame.ui) return; // a title's own panel owns its shortcut and input
+void SetGraphicsMenuOpen(bool value) {
     std::lock_guard lock(UiLock());
-    open = !open;
+    input::keyboard::ReleaseAll();
+    host::Pause().Menu(value);
+    open = value;
+    if (value) for (int port = 0; port < 4; ++port) input::Rumble(port, 0, 0);
+    LOGI("settings: %s; guest clocks and audio %s", value ? "opened" : "closed", value ? "paused" : "resumed");
+}
+void ToggleGraphicsMenu() {
+    std::lock_guard lock(UiLock());
+    if (kGame.toggle_menu) { kGame.toggle_menu(); return; }
+    SetGraphicsMenuOpen(!open);
     refresh = true;
     input::keyboard::ReleaseAll();
 }
 void DrawGraphicsMenu(double fps) {
-    if (!open) return;
+    if (!open || kGame.ui) return;
     if (refresh) { draft = Get(); refresh = false; }
     auto& io = ImGui::GetIO();
     const float scale = ImGui::GetFontSize() / 13.0f;
@@ -49,12 +60,12 @@ void DrawGraphicsMenu(double fps) {
         ImGui::Text("%.1f FPS", fps);
 #ifdef __ANDROID__
         if (ImGui::IsWindowAppearing()) ImGui::SetWindowFocus();
-        ImGui::TextWrapped("Pause with Start before opening settings. R3 closes this panel. D-pad or left stick: navigate. A: select. B: back.");
+        ImGui::TextWrapped("Game paused. R3 closes this panel and resumes. D-pad or left stick: navigate. A: select. B: back.");
         if (ImGui::CollapsingHeader("Xbox / Retroid controls")) {
             ImGui::TextWrapped("A / B / X / Y: Xbox face buttons. D-pad and both sticks: Xbox directional controls. L2 / R2: analog triggers. L1: White. R1: Black. Start: Start / pause. Select: Back. L3: left stick click. R3: this menu.");
         }
 #else
-        ImGui::TextWrapped("Pause the game before changing settings. F10 or Escape closes this panel.");
+        ImGui::TextWrapped("Game paused. R3, F10 or Escape closes this panel and resumes.");
 #endif
         ImGui::Separator();
         uint32_t mode = uint32_t(draft.display_mode);

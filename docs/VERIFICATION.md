@@ -113,3 +113,47 @@ After building PGR on Linux, run its audio checks without a window or audio devi
 ```sh
 python3 ports/PGR1/tools/build_audio_smoke.py --run
 ```
+
+
+## Seven-port maintenance and host settings pause (20 October)
+
+All seven Android ARM64 APKs build from the combined source and the single
+pinned SDL/glslang dependency build. The Linux builds now use the same prepared
+SDKs. BLACK's Linux adapter was updated to pass its Vulkan context to the
+shared transition/dependency helpers; its Android adapter no longer duplicates
+SDK framebuffer members. Splashdown's overlay no longer duplicates `SetMode`.
+
+Current checks: **86 SDK cases** on Lavapipe with no failed checks; **10 portable
+host cases** for pause/clocks/IRQL/limiting; **67 PGR mixer integration checks**;
+**5 BLACK mixer/folding cases**, **85 BLACK renderer cases**; and L.A. Rush's
+**76 input / 32 audio checks**.
+These results come from rebuilt test executables, separately from the earlier
+historical verification above.
+
+R3 opens a responsive panel over a retained frame and pauses guest calls,
+clocks and PCM playback. It closes and resumes without injecting Start. Device
+captures confirm PGR intro backgrounds remain unchanged while the panel is open.
+L.A. Rush Story driving likewise retains both the scene and speed display;
+closing resumes, and opening/closing over its original pause menu leaves the
+original game paused. Burnout's loading/intro path and Home/reopen cycle were
+also checked, including minimizing with the host panel open.
+
+Full mission/race completion and subjective sound comparison across every title
+remain separate checks. The original NFS pause/standings text alignment issue,
+Splashdown spray comparison and handheld Career report are not marked resolved
+by this shared-runtime maintenance.
+
+
+All seven updated APKs are installed and copied to their SD game folders, with
+matching SHA-256 hashes and current native payload/signature/alignment checks.
+Six updated in place. Splashdown's build-local signing key was accidentally
+removed during cleanup; after explicit user approval it was reinstalled using
+the retained suite key. Its three restored save files match the verified backup,
+and the game loaded them successfully. Renewing the same SD ISO grant restored
+direct boot: Home released its native process, and reopening created a fresh
+process without the picker. An Arcade race held both scene and lap timer while
+R3 was open, and resumed when closed. Original APK/save backups remain private.
+
+NFS and Links captures also retain an unchanged background while R3 is open;
+BLACK's custom panel fits the Android viewport and responds to the same R3 key.
+These are device smoke checks, not full game-completion claims.

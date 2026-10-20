@@ -650,14 +650,14 @@ void VulkanBackend::EndRendering() {
 void VulkanBackend::Barrier(Image& img, VkImageLayout to) {
     if (img.layout == to && to != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) return;
     EndRendering();
-    Transition(Cb(), img, to);
+    Transition(ctx_, Cb(), img, to);
 }
 
 void VulkanBackend::BeginRendering(const Attachments& a, uint32_t w, uint32_t h) {
     if (rendering_ && open_ == a) return;
     EndRendering();
     // a scope's loads read what an earlier scope stored: ordered by a dependency, not by luck
-    AttachmentDependency(Cb());
+    AttachmentDependency(ctx_, Cb());
     VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     if (a.color) {

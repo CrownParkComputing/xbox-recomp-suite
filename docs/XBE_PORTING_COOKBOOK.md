@@ -251,3 +251,78 @@ entry across host threads and release only when lowering below DISPATCH_LEVEL;
 nested raises must retain the lock. Test competing mutations and demonstrate that
 the test fails with the old unlocked behavior, then exercise real driving past
 the original failure time.
+
+
+### Suite maintenance: pause every guest subsystem, retain a responsive host
+
+R3 now has one contract across Linux and Android: open host settings and suspend
+play; close settings and resume. BLACK connects its custom panel through the
+same state, rather than bypassing the shortcut. Reserve the closing click too.
+On Android, intercept `KEYCODE_BUTTON_THUMBR` before SDL's per-device mapping,
+since controller clicks can arrive with a keyboard source. Suppress repeats.
+
+Blanking guest input is insufficient: a vehicle keeps coasting and opponents
+keep racing. Park guest workers at HLE/kernel/indirect-call boundaries, but let
+an elevated IRQL region finish before parking its owner. Never park while
+holding a host renderer or input mutex. The idle render queue must continue to
+redraw the retained front surface and panel. Keep these redraws separate from
+guest GPU present/fence numbering, and defer destruction of render targets for
+settings changes until play resumes. An early R3 request must allow device
+creation and a first renderable frame before suspending the guest.
+
+Use one pause-aware monotonic clock for the guest tick count, performance
+counter, RDTSC, relative waits and timer deadlines. Exclude elapsed panel time
+from the guest system clock too. Stop vertical-blank callbacks and hold PCM
+voice/stream positions; muting a running decoder loses music and streamed audio.
+Host logging, window messages and UI animation continue on real time. Do not
+inject Start to simulate a pause: it can instead unpause a title which was
+already paused. Test both original pause states, repeated toggles and early
+startup.
+
+The portable regressions cover clock freezing/resumption, guest worker wakeup,
+early-menu startup, elevated-IRQL exclusion and stereo/surround limiting.
+PGR additionally exercises the public HLE mixer; BLACK exercises its separate
+bus mixer and stereo/mono folding. Preserve these distinct mixer tests rather
+than assuming a change to the shared DSOUND file reaches BLACK's replacement.
+BLACK now validates bus targets/cycles and applies nested bus gain/distance;
+its final limiter runs after folding so a valid 5.1 block cannot overload stereo.
+This does not reproduce the full Xbox effects DSP or every bus channel matrix.
+
+A shared SDK promotion requires building every overlay, not merely checking
+that a patch applies. Splashdown retained its old `SetMode` handler after that
+handler became shared, producing duplicate definitions. BLACK's Android adapter
+likewise attempted to insert framebuffer members already supplied by the SDK.
+Remove the duplicate adaptations; keep title-specific behavior in explicit
+overlays and keep all seven builds on the audited base.
+
+### Android: foreground state is asynchronous
+
+Starting an ordinary service from a game Activity's `onCreate` can race Android's
+foreground UID transition. The observed result was
+`BackgroundServiceStartNotAllowedException` before native boot. Start the optional
+task-removal guard after window focus, catch background-start rejection, and
+retain dedicated-process teardown independently. Test a cold launch after an
+APK update, a launch from sleep, Home/reopen and the remembered SD grant.
+
+### Cleanup: one active source checkout and reproducible outputs
+
+Keep the combined repository as the active source, one pinned dependency build,
+one current Linux build and APK per title, private retail inputs and saves, and
+compact verification records. Archive unique local source changes and save data
+before removing superseded builds. Distinguish Xbox `E:` saves from regenerable
+`X:`/`Y:`/`Z:` caches. Never remove a signing key or asset directory as build
+cleanup, and never let ignored retail/generated files enter a source commit.
+A clean checkout and a verified full Git bundle preserve the source history.
+
+
+Before recursive cleanup, inspect every candidate directory for signing keys,
+including keys stored inside ignored `build/` folders. Preserve them privately
+and compare their public certificate against the installed APK before removing
+anything. Source archives which exclude build products and credentials do not
+back up those keys. Without the original key an Android update requires a
+reinstall, save restoration and renewed SD document permission; do not silently
+uninstall an existing app to overcome a signature mismatch.
+
+Keep a title's executable mapping consistent with CMake's actual output name.
+BLACK's `Black` mapping differed from its Linux `BLACK` executable; Linux image
+relaunch is case-sensitive, so the mapping now uses the actual output name.

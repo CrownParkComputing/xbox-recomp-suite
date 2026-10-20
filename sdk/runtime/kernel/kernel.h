@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "core/log.h"
+#include "core/host_pause.h"
 #include "cpu/x86_ops.h"
 #include "kernel/memory.h"
 
@@ -59,6 +60,13 @@ template <typename T>
 inline T& G(uint32_t va) {
     return *reinterpret_cast<T*>(g_base + va);
 }
+inline void HostPausePoint(const X86Context& ctx) {
+    if (!host::Pause().Paused()) return;
+    // Let an IRQL-protected region finish before parking its owner. Another
+    // thread may need that same gate to reach its own pause point.
+    if (!ctx.fs_base || G<uint8_t>(ctx.fs_base + 0x24) < 2) host::Pause().Wait();
+}
+
 inline uint32_t R32(uint32_t va) {
     uint32_t v;
     std::memcpy(&v, g_base + va, 4);

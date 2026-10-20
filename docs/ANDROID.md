@@ -23,8 +23,10 @@ may remain cached by Android. A cached launcher is not retained native game RAM.
 
 Connect a physical controller before starting. Sticks, D-pad, face buttons and
 analog triggers use SDL's mappings; R1 is Xbox Black and L1 is White. Select is
-Back. R3 opens the generic graphics panel in ports using that panel. BLACK has
-its own host settings/input UI; its prompts follow the last input device used.
+Back. R3 opens settings and automatically pauses the game, its clocks and audio.
+R3 closes settings and resumes; the original Start/pause state is preserved.
+This applies to all seven ports, including BLACK's custom settings panel.
+On Linux, R3 or F10 opens the same panel.
 There is no touch overlay.
 
 ## Device checks
@@ -34,7 +36,10 @@ There is no touch overlay.
 3. Reopen and confirm a different native PID, no picker, and intact saves.
 4. Make the selected path temporarily unavailable, confirm the picker returns,
    then restore the path and confirm direct boot returns.
-5. Test a real race/gameplay scene, controller navigation, music/effects,
+5. While driving, press R3: verify the scene and race timer stay fixed while
+   the panel responds to navigation. Close with R3 and verify smooth resumption.
+   Repeat while the original game is already paused and during an early intro.
+6. Test a real race/gameplay scene, controller navigation, music/effects,
    graphics, and save/reload separately. Intros alone do not validate gameplay.
 
 The connected Retroid Pocket Flip 2 (Android 13, Adreno 650, Vulkan 1.1.128)
@@ -85,3 +90,22 @@ Logs are private `files/logs` and use each title's tag in logcat. Examples:
 adb shell run-as com.splashdown.recomp ls files/logs
 adb logcat -v time Splashdown:V SDL:V AndroidRuntime:E libc:F '*:S'
 ```
+
+## Foreground startup and settings pause
+
+The task-removal service starts after the game window gains focus. Starting it
+in `onCreate` can precede Android's foreground UID transition and throw
+`BackgroundServiceStartNotAllowedException`. The optional guard catches that
+condition; native process cleanup remains in `onStop`/`onDestroy`.
+
+R3 is reserved before Android's per-device SDL mapping. This also handles pads
+which report stick clicks with a keyboard source. Key repeats do not reopen the
+panel, and the closing press does not reach the guest. Linux uses the SDL R3
+button event. An early press defers suspension until the renderer can draw its
+first frame, avoiding a boot deadlock.
+
+The renderer redraws the retained frame while guest workers stop at safe API
+boundaries. Threads finish elevated IRQL regions before parking. Guest time,
+relative waits, timer deadlines, vertical blanks and PCM playback exclude menu
+time. Host UI redraws do not advance guest GPU frame/fence counters. Render-size
+changes apply after resuming so the retained frame survives settings edits.
