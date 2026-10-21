@@ -35,6 +35,24 @@
       "matching_xbe_sha256": "ffb5ac9c63592c571c31a05311dae137c72126f8f5836cfabdfc798185bfb4bd",
       "overlay": "overlays/larush-sdk.patch",
       "validation": "Desktop Story driving and collision mesh rendering; Android SD boot, intro/title and Home/reopen with a fresh native PID; Android driving pending"
+    },
+    "VCop3": {
+      "source_checkout": "VCop3-XBERecomp",
+      "source_commit": "a8f649749683cb6fec9f7d7f4e149d64521acb79",
+      "overlay_directory": "overlays/chihiro",
+      "validation": "Linux gameplay snapshot retained; Android ARM64 APK build and host-side input checks; Android device validation pending"
+    },
+    "HOTD3": {
+      "source_checkout": "HOTD3-XBERecomp",
+      "source_commit": "1c7c48b6d9977bf0ccbd391845bbb41f0967a1cd",
+      "overlay_directory": "overlays/chihiro",
+      "validation": "Linux gameplay snapshot retained; Android ARM64 APK build and host-side input checks; Android device validation pending"
+    },
+    "OutRun2": {
+      "source_checkout": "OutRun2-XBERecomp",
+      "source_commit": "32f8454be6ae923c229cccbd5238322889e183d8",
+      "overlay_directory": "overlays/chihiro",
+      "validation": "Linux gameplay snapshot retained; Android ARM64 APK build and host-side input checks; Android device validation pending"
     }
   },
   "larush_overlay": "overlays/larush-sdk.patch"

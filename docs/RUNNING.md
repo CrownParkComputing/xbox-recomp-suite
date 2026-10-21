@@ -29,6 +29,9 @@ All commands below run from the suite root. Title names are case-sensitive:
 | Project Gotham Racing | `PGR1` | `PGR1` | `com.pgr1.recomp` |
 | BLACK | `BLACK` | `BLACK` | `com.black.recomp` |
 | L.A. Rush | `LARush` | `LARush` | `com.larush.recomp` |
+| Virtua Cop 3 (MYSTRO) | `VCop3` | `VCop3` | `com.vcop3.recomp` |
+| The House of the Dead III | `HOTD3` | `HOTD3` | `com.hotd3.recomp` |
+| OutRun 2 (Chihiro 2.000) | `OutRun2` | `OutRun2` | `com.outrun2.recomp` |
 
 Each APK is `dist/<title>-arm64-debug.apk`. Each Linux executable is under
 `ports/<title>/out/build/linux-release/`. The scripts prepare the appropriate
@@ -57,7 +60,7 @@ python3 tools/build_linux.py LARush --tools-only --jobs 4
 ports/LARush/out/build/linux-release/iso_extract --all "/path/to/LA Rush.iso" ports/LARush/assets
 ```
 
-The recompiler needs `default.xbe` as a local extracted file, even if you intend
+The recompiler needs the matching executable as a local extracted file, even if you intend
 to select an ISO on Android. Game inputs and generated outputs are ignored by
 Git; do not force-add them.
 
@@ -75,7 +78,9 @@ the matching `assets` folder alongside the executable.
 
 Connect a physical controller. SDL maps the sticks, D-pad, face buttons, and
 triggers; R1 maps to Xbox Black, L1 to White, and Select to Back. There is no
-touch overlay on Android. R3 opens settings and automatically pauses gameplay,
+touch overlay for the seven retail Xbox ports. The three Chihiro ports have
+touch controls described in [ANDROID.md](ANDROID.md#chihiro-touch-controls).
+R3 opens settings and automatically pauses gameplay,
 game clocks and audio. R3 closes settings and resumes. F10 also works on Linux.
 BLACK retains its custom panel and follows the same pause contract.
 

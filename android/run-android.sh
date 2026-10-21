@@ -10,6 +10,9 @@ case "$title" in
     BLACK) slug=black;;
     PGR1) slug=pgr1;;
     LARush) slug=larush;;
+    VCop3) slug=vcop3;;
+    HOTD3) slug=hotd3;;
+    OutRun2) slug=outrun2;;
     *) echo "Unknown title: $title" >&2; exit 2;;
 esac
 adb_command=(adb)

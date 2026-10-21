@@ -1,6 +1,6 @@
 # Xbox Recomp Suite
 
-Source snapshots for seven original Xbox native ports, their Linux/Vulkan and
+Source snapshots for ten original Xbox/Chihiro native ports, their Linux/Vulkan and
 Android tooling, the shared Xbox XBE Recomp runtime, and the porting cookbook.
 SDL and the other source dependencies are vendored with their upstream licenses
 and exact revisions in [`DEPENDENCIES.lock.json`](DEPENDENCIES.lock.json).
@@ -19,6 +19,9 @@ is not evidence of complete gameplay support.
 | PGR1 | SD folder boot; intro plays; Linux multi-car audio routing checked | Full Android race graphics/performance and listening comparison remain open |
 | BLACK | SD folder boot; intro and title screen | Full gameplay/performance not validated here |
 | L.A. Rush | SD boot, intro/title, Story free roam and fresh-process relaunch verified; desktop Story driving verified | Full races, missions and sustained performance remain unvalidated |
+| Virtua Cop 3 (MYSTRO) | ARM64 APK builds; mouse/touch input tests pass | Android device boot/gameplay unverified; Linux gameplay and stage previews verified |
+| The House of the Dead III | ARM64 APK builds; mouse/touch input tests pass | Android device boot/gameplay unverified; Linux first-stage mouse gun verified |
+| OutRun 2 (Chihiro 2.000) | ARM64 APK builds with touch driving controls | Android device boot/gameplay unverified; Linux first-course driving verified |
 
 The shared Android launcher remembers the selected SD ISO/folder, skips the
 picker while it remains accessible, and ends the native game process on
@@ -66,11 +69,13 @@ adb shell am start -n com.larush.recomp/.LauncherActivity
 ```
 
 Connect a physical controller and select your ISO or extracted folder on the
-device. The launcher remembers that location. See the table above for each
+device. The three Chihiro ports also provide touch controls. The launcher
+remembers that location. See the table above for each
 port's validation limits.
 
 Replace `LARush` with `Splashdown`, `Burnout3`, `Links2004`, `NFSHP2`, `PGR1`, or
-`BLACK` to build another title. [The run guide](docs/RUNNING.md) lists executable
+`BLACK`, `VCop3`, `HOTD3`, or `OutRun2` to build another title.
+[The run guide](docs/RUNNING.md) lists executable
 names, Android packages, ISO extraction, saves, and troubleshooting.
 
 Dependencies can be compiled without any game data:

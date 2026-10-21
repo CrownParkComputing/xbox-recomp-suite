@@ -34,9 +34,14 @@ get a derived SDK under `.local/sdks/`, produced by applying their respective
 The tool installs relative, ignored `sdk` links into each port. Do not apply the
 older historical Splashdown patch series on top of this prepared SDK.
 The original seven-patch history is retained under `ports/Splashdown/patches`.
+The three Chihiro ports share a separate prepared SDK with the six patches in
+`overlays/chihiro/`; the retail Xbox ports' SDKs remain separate.
 
 Generated guest C++ lives in the port's ignored `generated/` directory. It must
-come from the same local `default.xbe` whose configuration is in that port.
+come from the same local executable whose configuration is in that port.
+Most ports use `default.xbe`; HOTD3 uses `hod3xb.xbe` and OutRun 2 uses
+`outrun2.xbe`. These three new ports also check the exact executable SHA-256
+before generating code or building an APK.
 The source suite deliberately includes neither executable nor generated C++.
 
 Tools alone can be built without a game:

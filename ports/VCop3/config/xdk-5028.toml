@@ -1,0 +1,42 @@
+# Partial layout proven against the user-supplied MYSTRO default.xbe.
+[layout]
+XPP_Current = 0x0  # XGetDevices 0x136811 reads [edx].
+XPP_Changed = 0x4  # XGetDevices clears [edx+4]; XGetDeviceChanges tests [esi+4].
+XPP_Previous = 0x8 # XGetDevices stores the current mask at [edx+8].
+
+# All offsets below are read from this executable, not copied from another XDK.
+CDevice_Push = 0x0          # SetTexture 0x108D62 loads the write pointer.
+CDevice_PushThreshold = 0x4 # SetTexture 0x108D65 compares the write pointer.
+CDevice_BaseVertex = 0x1C   # SetIndices 0x108F3D stores BaseVertexIndex.
+CDevice_IndexBuffer = 0x388 # SetIndices 0x108F36 stores the index-buffer handle.
+CDevice_ZScale = 0x50C      # GetViewportOffsetAndScale 0x1065A5 scales Z.
+CDevice_SuperSampleX = 0x518 # GetViewportOffsetAndScale 0x1064FE scales X.
+CDevice_SuperSampleY = 0x51C # GetViewportOffsetAndScale 0x106520 scales Y.
+CDevice_Transforms = 0x810   # SetTransform 0x107E96, sixteen dwords at type * 64.
+CDevice_Textures = 0xB38     # SetTexture 0x108D59 stores the stage texture.
+CDevice_RenderTarget = 0x15B4 # GetRenderTarget2 0x108876 returns this pointer.
+CDevice_Depth = 0x15B8        # GetDepthStencilSurface2 0x108896 reads this pointer.
+CDevice_BackBuffer = 0x15C0   # GetBackBuffer2 0x1084C8 maps index 0 to array slot 0.
+CDevice_FrontBuffer = 0x15C4  # GetBackBuffer2 0x1084AF maps index -1 to array slot 1.
+CDevice_SwapCount = 0x2010    # Swap 0x10BD60 increments, 0x10BDD1 returns it.
+CDevice_Size = 0x2030         # CreateDevice 0x10B24B clears 0x80C dwords.
+DirtyFlags_Texture = 0x4800  # SetTexture 0x108D97 ORs this mask.
+TextureState_Stage = 32       # SetTextureStageStateNotInline 0x106F2B shifts by five.
+Stream_Size = 12              # SetStreamSource 0x109AEA..0x109AED multiplies index by 12.
+Stream_Stride = 0x0           # SetStreamSource 0x109B32 writes stride at stream base.
+Stream_Buffer = 0x8           # SetStreamSource 0x109B38 writes buffer at base + 8.
+CDevice_Flags = 0x8           # CreateDevice 0x10B224 stores BehaviorFlags & 0x10.
+CDevice_Time = 0x2C           # SetTexture 0x108D33 copies this timestamp to old resource.
+CDevice_PixelShader = 0x36C   # SetPixelShader 0x10A0D8 stores its handle.
+CDevice_VertexShader = 0x37C  # SetVertexShader 0x109F38 stores the shader object.
+CDevice_VertexShaderHandle = 0x380 # SetVertexShader 0x109F3E stores the API handle.
+CDevice_Viewport = 0xA90      # SetViewport 0x1089AB..0x1089CF writes all six fields.
+CDevice_ScreenSpaceOffset = 0xAA8 # SetScreenSpaceOffset 0x1092F3 and 0x109303.
+CDevice_VBlankEvent = 0x1954  # BlockUntilVerticalBlank 0x1081E7 passes this event.
+CDevice_VBlankCallback = 0x1950 # SetVerticalBlankCallback 0x1081BA stores the callback.
+CDevice_VBlankCount = 0x1980 # ISR 0x10F884..0x10F891 increments subdevice + 0x1C0; subdevice is device + 0x17C0.
+CDevice_GammaRamps = 0x199C   # SetGammaRamp 0x107E03 + 0x1DC, 0x300 bytes per ramp.
+
+EffectsImage_Skip0 = 0x804 # Effects parser 0x1296F0 adds this image dword count.
+EffectsImage_Skip1 = 0x80C # Effects parser 0x1296EA reads this image dword count.
+EffectsImage_Desc = 0x818  # 0x1296F9 forms image + 0x818 + (Skip0 + Skip1) * 4.

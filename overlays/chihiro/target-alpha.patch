@@ -1,0 +1,83 @@
+--- a/runtime/gpu/shaders.h
++++ b/runtime/gpu/shaders.h
+@@ -18,6 +18,7 @@
+ };
+ enum : uint8_t {
+     kTexWide = 4,  // an upscaled target shrunk by the pass: each tap averaged over console texels
++    kTexOpaqueAlpha = 8, // XRGB ignores the stored alpha bits when sampled
+ };
+ 
+ struct PixelKey {
+--- a/runtime/gpu/shaders.cpp
++++ b/runtime/gpu/shaders.cpp
+@@ -811,6 +811,9 @@
+     if (k.programmable) {
+         for (int i = 0; i < 4; i++) {
+             body += TexFetch(k, i);
++            const uint32_t mode = (k.tex_modes >> (i * 5)) & 0x1F;
++            if ((k.tex[i].flags & kTexOpaqueAlpha) && mode && mode != 4 && mode != 5 && mode != 0xA && mode != 0x11)
++                body += F("t%d.a = 1;\n", i);
+             body += Hooks().Fetched(k.tex[i], i);
+         }
+         for (int i = 0; i < 4; i++) {
+@@ -865,6 +868,7 @@
+             else if (t.kind == kTexCube && !(cube = Hooks().Cube(t, i, F("tc%d.xyz", i))).empty()) body += F("float4 t%d = %s;\n", i, cube.c_str());
+             else if (t.kind) body += F("float4 t%d = tex%d.Sample(smp%d, tc%d.xyz);\n", i, i, i, i);
+             else body += F("float4 t%d = float4(1,1,1,1);\n", i);
++            if (t.flags & kTexOpaqueAlpha) body += F("t%d.a = 1;\n", i);
+             body += Hooks().Fetched(t, i);
+             if ((k.alphakill >> i) & 1) body += F("if (t%d.a == 0) discard;\n", i);
+             const char* dst = f[8] == 5 ? "tmp" : "cur";
+--- a/runtime/gpu/vulkan.cpp
++++ b/runtime/gpu/vulkan.cpp
+@@ -1439,6 +1439,7 @@
+     const FormatInfo& fi = Format(d.format);
+     info.kind = TextureKind(d);
+     info.rect = d.linear;
++    if (d.format == 0x07 || d.format == 0x1E) info.flags |= kTexOpaqueAlpha;
+     // rendered by the GPU: sample the target itself; DXT data loaded over a target's memory is not it
+     auto tit = targets_.find(SizedTargetKey(d.data, fi.depth, d.width, d.height));
+     if (tit != targets_.end() && !d.cube && d.depth == 1 && !fi.compressed)
+--- a/tests/test_render.cpp
++++ b/tests/test_render.cpp
+@@ -298,6 +298,40 @@
+     CHECK_MSG(d.count < kEdgeSlack, d.first);
+ }
+ 
++TEST("render: XRGB target textures sample opaque in fixed and programmable pipelines") {
++    REQUIRE(Vulkan());
++    for (uint32_t format : {kFmtLinArgb, 0x1Eu}) {
++        for (bool programmable : {false, true}) {
++            GuestSurface source(format, kW, kH, true), dest(kFmtLinArgb, kW, kH);
++            State from = BaseState(source.s, nullptr);
++            const auto colour = Argb(0, 200, 100, 50);
++            Vulkan()->Clear(from, 0, nullptr, kClearTarget, colour, 1, 0);
++            GuestBuffer vb({0, 0, .5f, 1, 0, 0, 64, 0, .5f, 1, 64, 0,
++                            0, 64, .5f, 1, 0, 64, 64, 64, .5f, 1, 64, 64});
++            State to = BaseState(dest.s, nullptr);
++            to.vs_handle = kFvfXyzRhw | kFvfTex1;
++            to.streams[0] = {vb.header, 24};
++            to.textures[0] = source.header;
++            to.tss[0][kTssColorArg1] = kTaTexture;
++            to.tss[0][kTssAlphaArg1] = kTaTexture;
++            to.simple[kMBlendEnable >> 2] = 1;
++            to.simple[kMSrcBlend >> 2] = 0x302;
++            to.simple[kMDestBlend >> 2] = 0x303;
++            if (programmable) {
++                to.ps = std::make_shared<PixelShader>();
++                to.ps->def[8] = 0x08; // final RGB = T0
++                to.ps->def[9] = 0x1800; // final alpha = T0.a
++                to.rs[kRsPsTextureModes] = 1;
++            }
++            const auto background = Argb(255, 0, 0, 255);
++            Vulkan()->Clear(to, 0, nullptr, kClearTarget, background, 1, 0);
++            Vulkan()->Draw(to, kTriangleStrip, 0, 4, nullptr);
++            Vulkan()->Sync(dest.data, 0);
++            CHECK_EQ(dest.At(32, 32), format == 0x1E ? Argb(255, 200, 100, 50) : background);
++        }
++    }
++}
++
+ TEST("render: the depth test keeps the nearer of two overlapping triangles in either order") {
+     REQUIRE(Vulkan());
+     GuestBuffer near_tri(RhwDiffuse({{{4, 4, 0.2f, 1}}, {{60, 4, 0.2f, 1}}, {{32, 60, 0.2f, 1}}},

@@ -1,5 +1,6 @@
 # Private game inputs, generated recompilation and runtime state
 /ports/*/assets
+/ports/*/.local/
 /ports/*/generated
 /ports/*/sdk
 /ports/*/out
@@ -29,6 +30,21 @@
 *.iso
 *.xiso
 *.xbe
+*.chd
+*.cue
+*.cvm
+*.pic
+*.fatx
+*.sfd
+*.xpr
+*.tgt
+*.bin
+*.data
+*.key
+*.zip
+*.so
+*.a
+*.o
 **/.env
 **/.env.*
 **/local.properties

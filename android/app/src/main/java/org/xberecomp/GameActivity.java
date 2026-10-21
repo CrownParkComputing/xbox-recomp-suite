@@ -6,6 +6,22 @@ import android.widget.Toast;
 import org.libsdl.app.SDLActivity;
 
 public class GameActivity extends SDLActivity {
+    private ArcadeControls arcadeControls;
+
+    @Override protected void onCreate(android.os.Bundle state) {
+        super.onCreate(state);
+        String controls = PortConfig.controls(this);
+        if (!controls.isEmpty() && mLayout != null) {
+            arcadeControls = new ArcadeControls(this, controls);
+            mLayout.addView(arcadeControls, new android.widget.RelativeLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+    }
+
+    @Override protected void onPause() {
+        if (arcadeControls != null) arcadeControls.releaseAll();
+        super.onPause();
+    }
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {
         if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_THUMBR) {
             // Reserve R3 before SDL's per-device mapping. Some Android pads
@@ -19,6 +35,7 @@ public class GameActivity extends SDLActivity {
         return super.dispatchKeyEvent(event);
     }
     @Override public void onWindowFocusChanged(boolean focused) {
+        if (!focused && arcadeControls != null) arcadeControls.releaseAll();
         super.onWindowFocusChanged(focused);
         if (focused) getWindow().getDecorView().post(() -> {
             if (isFinishing() || isDestroyed()) return;

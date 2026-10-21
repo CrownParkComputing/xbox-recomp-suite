@@ -1,0 +1,60 @@
+--- a/runtime/xdk/d3d8.h
++++ b/runtime/xdk/d3d8.h
+@@ -10,3 +10,8 @@
+ void SetMovieFrame(uint32_t data, uint32_t width, uint32_t height, uint32_t pitch, uint32_t x, uint32_t y);
+ 
+ }  // namespace d3d
++
++namespace d3d {
++// Drain native guest push commands before reading a GPU-produced report.
++void FlushGuestCommands();
++}
+--- a/runtime/xdk/d3d8.cpp
++++ b/runtime/xdk/d3d8.cpp
+@@ -1569,3 +1569,11 @@
+     SetDev(XDK_CDevice_Flags, Dev(XDK_CDevice_Flags) & ~0x1800u);
+     return 0;
+ }
++
++namespace d3d {
++void FlushGuestCommands() {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    Walk(Dev(kDevPush));
++    if (g_backend) g_backend->Flush();
++}
++}
+--- a/runtime/gpu/vulkan.cpp
++++ b/runtime/gpu/vulkan.cpp
+@@ -643,6 +643,7 @@
+     }
+     if (wait) {
+         ctx_.Wait(fence_value_);
++        DeliverReports();  // CPU polls may need a completed report before the first Present.
+         vkResetCommandPool(ctx_.dev, f.pool, 0);
+         DropSlotFramebuffers();
+         f.images.clear();
+--- a/tests/test_render.cpp
++++ b/tests/test_render.cpp
+@@ -584,8 +584,8 @@
+     CHECK_EQ(rt.At(32, 32), Argb(255, 200, 150, 100));
+ }
+ 
+-// a visibility test: the title counts the pixels a draw passes, then reads the report the GPU writes once done
+-TEST("render: a visibility test reports the pixels its draws covered, once the GPU has finished them") {
++// A title may poll the report before presenting its first frame.
++TEST("render: a visibility test reports covered pixels after Flush without Present") {
+     REQUIRE(Vulkan());
+     if (!test::CountsPixels()) {
+         std::printf("    no visibility tests in this renderer: skipped\n");
+@@ -607,10 +607,7 @@
+     s.simple[kMCountEnable >> 2] = 0;
+     Vulkan()->Draw(s, kTriangleStrip, 0, 4, nullptr);  // not counted
+     Vulkan()->GetReport(report);
+-    for (int i = 0; i < 4 && kernel::R32(report + 12); i++) {
+-        Vulkan()->Present(rt.s);
+-        Vulkan()->Flush();
+-    }
++    Vulkan()->Flush();
+     CHECK_MSG(kernel::R32(report + 12) == 0, "the report was written");
+     CHECK_EQ(kernel::R32(report + 8), 200u);
+ }

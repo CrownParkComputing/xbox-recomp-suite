@@ -4,7 +4,7 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
-from prepare import ROOT, PORTS, prepare
+from prepare import ROOT, PORTS, prepare, image_for, verify_image
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("title", choices=PORTS)
@@ -20,8 +20,9 @@ subprocess.run(["cmake", "--preset", preset], cwd=source, check=True)
 if args.tools_only:
     targets = ["xbe_recomp", "xbe_symbols", "iso_extract"]
 else:
-    if not (source / "assets/default.xbe").exists():
+    if not (source / "assets" / image_for(args.title)).exists():
         parser.error("Put your own extracted game in ports/" + args.title + "/assets first (or use --tools-only)")
+    verify_image(args.title)
     target = PORTS[args.title][2]
     targets = ["recompile_" + target] if args.generate_only else [target]
 subprocess.run(["cmake", "--build", "--preset", preset, "--target"] + targets + ["-j", args.jobs], cwd=source, check=True)

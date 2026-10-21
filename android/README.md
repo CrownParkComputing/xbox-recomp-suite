@@ -1,6 +1,6 @@
 # Shared Android sources
 
-The six ports share the SDL Java integration, remembered ISO/folder picker,
+The ten ports share the SDL Java integration, remembered ISO/folder picker,
 dedicated native process lifecycle, document-tree JNI reader, and glslang shader
 adapter in this directory. Build with `python3 tools/build_android.py <title>`
 from the repository root; do not invoke the old standalone packaging commands.

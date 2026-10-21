@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build any of the seven Android ports from the source suite."""
+"""Build an Android port from the source suite, without packaging game files."""
 import argparse
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
-from prepare import ROOT, PORTS, prepare
+from prepare import ROOT, PORTS, CHIHIRO, prepare, image_for, verify_image
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("title", choices=PORTS, nargs="?", default="Splashdown")
@@ -31,9 +31,10 @@ toolchain = ["-DCMAKE_TOOLCHAIN_FILE=" + str(ndk / "build/cmake/android.toolchai
              "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"]
 
 if not args.stage_only and not args.dependencies_only:
-    for required in (source / "assets/default.xbe", source / "generated/game/x86_func_mapping.cpp"):
+    for required in (source / "assets" / image_for(title), source / "generated/game/x86_func_mapping.cpp"):
         if not required.exists():
             parser.error(f"Missing {required.relative_to(ROOT)}; provide your game and run tools/build_linux.py {title} --generate-only first")
+    verify_image(title)
 
 if not args.stage_only:
     if args.deps_build:
@@ -57,6 +58,12 @@ for activity in ("LauncherActivity", "GameActivity"):
 shutil.copytree(ROOT / "android/app/src/main/res", main / "res", dirs_exist_ok=True)
 manifest = (ROOT / "android/app/src/main/AndroidManifest.xml").read_text()
 manifest = manifest.replace("com.splashdown.recomp", package).replace('android:label="Splashdown"', f'android:label="{label}"')
+if title in CHIHIRO:
+    info = CHIHIRO[title]
+    metadata = (f'<meta-data android:name="org.xberecomp.GAME_XBE" android:value="{info["xbe"]}" />\n'
+                f'        <meta-data android:name="org.xberecomp.CONTROLS" android:value="{info["controls"]}" />\n'
+                f'        <meta-data android:name="org.xberecomp.FOLDER_ONLY" android:value="{str(info["folder_only"]).lower()}" />\n        ')
+    manifest = manifest.replace('<meta-data android:name="SDL_ENV.XBE_CAPTURE_DIR"', metadata + '<meta-data android:name="SDL_ENV.XBE_CAPTURE_DIR"')
 (main / "AndroidManifest.xml").write_text(manifest)
 script = (ROOT / "android/package.sh").read_text().replace("com.splashdown.recomp", package).replace("Splashdown-arm64", title + "-arm64")
 (android / "package.sh").write_text(script)
@@ -119,7 +126,8 @@ if not args.stage_only:
     subprocess.run(["cmake", "-G", "Ninja", "-S", str(ROOT / "android/ports"), "-B", str(build),
         "-DXBE_REPO_DIR=" + str(source), "-DXBE_SDK_DIR=" + str(sdk),
         "-DXBE_DEPS_SOURCE=" + str(ROOT / "third_party"), "-DXBE_DEPS_BUILD=" + str(dep_build),
-        "-DXBE_TITLE=" + title] + toolchain + cmake_args, check=True)
+        "-DXBE_TITLE=" + title, "-DXBE_GAME_XBE=" + image_for(title),
+        "-DXBE_INPUT_DEFINE=" + CHIHIRO.get(title, {}).get("input", "")] + toolchain + cmake_args, check=True)
     subprocess.run(["cmake", "--build", str(build), "--target", "main", "-j", args.jobs], check=True)
     libs = main / "jniLibs/arm64-v8a"
     libs.mkdir(parents=True, exist_ok=True)

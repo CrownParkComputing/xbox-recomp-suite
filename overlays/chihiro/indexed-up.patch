@@ -1,0 +1,41 @@
+--- a/runtime/xdk/d3d8.cpp
++++ b/runtime/xdk/d3d8.cpp
+@@ -48,6 +48,10 @@
+ #endif
+ #ifndef XDK_CDevice_EmbeddedBuffers
+ #define XDK_CDevice_EmbeddedBuffers 0
++#endif
++#ifndef SYM_D3DDevice_DrawIndexedVerticesUP
++#define SYM_D3DDevice_DrawIndexedVerticesUP FFFFFE05
++#define HAS_D3DDevice_DrawIndexedVerticesUP 0
+ #endif
+ 
+ namespace d3d {
+@@ -1530,6 +1534,27 @@
+     return 0;
+ }
+ 
++HLE_STDCALL(D3DDevice_DrawIndexedVerticesUP, 5) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    Walk(Dev(kDevPush));
++    const uint32_t count = a[1], stride = a[4];
++    if (!count) return 0;
++    if (!a[2] || !a[3] || !stride || uint64_t(count) * stride > kUpHalf) {
++        LOG_FIRST(4, "d3d: invalid indexed UP draw, %u indices, stride %u", count, stride);
++        return 0x80070057u;
++    }
++    // The Xbox entry point expands 16-bit indices into inline vertices
++    // (VC3 0x10A83D..0x10A860). Copy into the same fenced UP ring used by
++    // non-indexed draws so the caller may reuse its memory after return.
++    std::vector<uint8_t> vertices(size_t(count) * stride);
++    for (uint32_t i = 0; i < count; ++i) {
++        const uint32_t index = R16(a[2] + i * 2);
++        std::memcpy(vertices.data() + size_t(i) * stride, HostPtr(a[3] + index * stride), stride);
++    }
++    DrawUp(a[0], count, vertices.data(), stride);
++    return 0;
++}
++
+ // BeginPush(dwords) hands out room for raw hardware commands, EndPush(end) runs what the title wrote there:
+ // Execute reads it as Walk does, and its simple states as the title set them.
+ HLE_STDCALL(D3DDevice_BeginPush, 1) {

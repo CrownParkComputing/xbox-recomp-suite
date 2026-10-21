@@ -1,4 +1,23 @@
-# Verification record — updated 2026-10-20
+# Verification record — updated 2026-10-21
+
+## Chihiro Android additions
+
+Virtua Cop 3 (MYSTRO), HOTD3 and OutRun 2 now have ARM64 APKs built with NDK
+28.2.13676358, signed and checked with apksigner/16 KiB zip alignment. Their APK
+payloads contain application resources, Java and three ARM64 native libraries;
+no game files are packaged. Game folders remain external inputs.
+
+The four native mouse/touch test programs pass, including taps between polls,
+finger cancellation, secondary-finger ownership and suppression of duplicate
+SDL touch-mouse shots. Fifteen extraction tests and the ten shared host-runtime
+tests also pass. All three exact executable hash guards and code generation
+complete successfully. Native Linux gameplay evidence is preserved in each
+port's `docs/LINUX_SNAPSHOT.md`.
+
+ADB showed no connected device during this addition. Android installation,
+native boot, rendering, touch alignment, sustained play, performance and audio
+for these three titles remain unverified. Prior handheld checks below apply
+to the original seven ports.
 
 ## Source import checks
 

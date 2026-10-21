@@ -57,6 +57,7 @@ public class LauncherActivity extends Activity {
             startActivityForResult(intent, PICK_FOLDER);
         });
         layout.addView(folder);
+        if (PortConfig.folderOnly(this)) choose.setVisibility(android.view.View.GONE);
         setContentView(layout);
         updateStatus();
     }
@@ -90,11 +91,16 @@ public class LauncherActivity extends Activity {
                 return true;
             } catch (Exception unavailable) { return false; }
         }
-        File[] data = assets().listFiles((dir, name) -> name.equalsIgnoreCase("default.xbe") || name.toLowerCase(java.util.Locale.ROOT).endsWith(".iso"));
+        File[] data = assets().listFiles((dir, name) -> isGameFile(name));
         return data != null && data.length > 0;
     }
 
     private File assets() { return new File(getFilesDir(), "assets"); }
+
+    private boolean isGameFile(String name) {
+        return name.equalsIgnoreCase(PortConfig.executable(this)) ||
+            (!PortConfig.folderOnly(this) && name.toLowerCase(java.util.Locale.ROOT).endsWith(".iso"));
+    }
 
     private boolean folderHasGame(Uri tree) throws Exception {
         String id = DocumentsContract.getTreeDocumentId(tree);
@@ -103,7 +109,7 @@ public class LauncherActivity extends Activity {
                 new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
             if (cursor == null) return false;
             while (cursor.moveToNext()) {
-                if (!"default.xbe".equalsIgnoreCase(cursor.getString(1))) continue;
+                if (!PortConfig.executable(this).equalsIgnoreCase(cursor.getString(1))) continue;
                 Uri xbe = DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0));
                 try (android.os.ParcelFileDescriptor file = getContentResolver().openFileDescriptor(xbe, "r")) {
                     return file != null;
@@ -114,12 +120,12 @@ public class LauncherActivity extends Activity {
     }
 
     private void updateStatus() {
-        File[] data = assets().listFiles((dir, name) -> name.equalsIgnoreCase("default.xbe") || name.toLowerCase(java.util.Locale.ROOT).endsWith(".iso"));
+        File[] data = assets().listFiles((dir, name) -> isGameFile(name));
         boolean local = data != null && data.length > 0;
         String selected = getSharedPreferences("game", MODE_PRIVATE).getString("uri", "");
         String name = getSharedPreferences("game", MODE_PRIVATE).getString("name", "Selected game image");
         boolean ready = hasGame();
-        status.setText(!selected.isEmpty() ? (ready ? name + " — opens directly" : "Saved image unavailable. Reconnect the SD card or choose the image again.") : local ? "Game data ready" : "Choose your game image");
+        status.setText(!selected.isEmpty() ? (ready ? name + " — opens directly" : "Saved game unavailable. Reconnect the SD card or choose the game again.") : local ? "Game data ready" : PortConfig.folderOnly(this) ? "Choose the game folder containing " + PortConfig.executable(this) : "Choose your game image or folder");
         start.setEnabled(ready);
         if (ready) start.requestFocus(); else choose.requestFocus();
     }
@@ -131,7 +137,7 @@ public class LauncherActivity extends Activity {
         if (request == PICK_FOLDER) {
             try {
                 if (!folderHasGame(uri)) {
-                    status.setText("Choose the extracted game folder containing default.xbe."); return;
+                    status.setText("Choose the extracted game folder containing " + PortConfig.executable(this) + "."); return;
                 }
                 String id = DocumentsContract.getTreeDocumentId(uri);
                 remember(uri, id.substring(Math.max(id.lastIndexOf('/'), id.lastIndexOf(':')) + 1), "folder", intent);

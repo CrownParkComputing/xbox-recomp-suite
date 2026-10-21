@@ -25,6 +25,7 @@ def indexed(name):
     return data
 private_extensions = {".xbe", ".iso", ".xiso", ".apk", ".aab", ".keystore", ".jks", ".p12", ".pfx"}
 private_dirs = {"assets", "generated", "out", "build", "build-native", "logs", "hdd", "CrashDumps", "sdk"}
+game_extensions = {".bin", ".data", ".pic", ".chd", ".cue", ".cvm", ".fatx", ".sfd", ".xpr", ".tgt", ".key", ".zip"}
 secret = re.compile(rb"(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,}|AKIA[A-Z0-9]{16}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----)")
 total = 0
 for name in files:
@@ -37,6 +38,8 @@ for name in files:
         errors.append("build product: " + name)
     if path.parts[0] == "ports" and len(path.parts) > 2 and path.parts[2] in private_dirs:
         errors.append("private port input/output: " + name)
+    if path.parts[0] == "ports" and path.suffix.lower() in game_extensions:
+        errors.append("game data/security/archive file: " + name)
     # Inspect the actual indexed blob, not a possibly different working file.
     data = indexed(name)
     total += len(data)

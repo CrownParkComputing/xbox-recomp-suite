@@ -1,7 +1,11 @@
 # Android runtime and device recipe
 
 The shared launcher supports a local `.iso` through `ACTION_OPEN_DOCUMENT` or
-an extracted folder containing `default.xbe` through `ACTION_OPEN_DOCUMENT_TREE`.
+an extracted folder through `ACTION_OPEN_DOCUMENT_TREE`. Most titles expect
+`default.xbe`; HOTD3 expects `hod3xb.xbe` and OutRun 2 expects `outrun2.xbe`.
+HOTD3 and OutRun 2 use folders because their supplied arcade media is not a
+standard Xbox ISO. The Virtua Cop 3 build accepts the matching MYSTRO Xbox ISO
+or its extracted folder.
 Only a persistent read grant is retained. Files stay on the selected SD card.
 The APK contains no game data.
 
@@ -25,9 +29,28 @@ Connect a physical controller before starting. Sticks, D-pad, face buttons and
 analog triggers use SDL's mappings; R1 is Xbox Black and L1 is White. Select is
 Back. R3 opens settings and automatically pauses the game, its clocks and audio.
 R3 closes settings and resumes; the original Start/pause state is preserved.
-This applies to all seven ports, including BLACK's custom settings panel.
+This applies to all ten ports, including BLACK's custom settings panel.
 On Linux, R3 or F10 opens the same panel.
-There is no touch overlay.
+The original seven retail Xbox ports require a physical controller.
+
+## Chihiro touch controls
+
+| Port | Touch controls |
+| --- | --- |
+| Virtua Cop 3 | Tap/drag the game area to aim and fire; Start, Reload and Slow buttons; Settings pauses the game |
+| HOTD3 | Tap/drag the game area to aim and fire; Reload pumps the shotgun; Coin then Start; Settings pauses the game |
+| OutRun 2 | Hold Left/Right to steer; Gas accelerates and confirms selections; Brake slows; Coin then Start; Settings pauses the game |
+
+The controls accept multiple fingers, so steering and acceleration can be held
+together. Gun aim uses the renderer's centered 4:3 presentation rectangle;
+tapping outside it reloads. A second aim finger cannot steal the primary aim.
+Focus loss and touch cancellation release held controls. A USB/Bluetooth mouse
+can also use the shooters' desktop left-fire/right-reload mappings.
+
+The ARM64 APKs build and their native mouse/touch tests pass. No Android device
+was connected for this addition, so these three games' on-device boot, graphics,
+touch alignment, performance and sound remain unverified. Earlier device results
+below apply to the original seven titles.
 
 ## Device checks
 

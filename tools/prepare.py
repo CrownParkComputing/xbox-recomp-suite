@@ -13,16 +13,53 @@ PORTS = {"Splashdown": ("Splashdown", "splashdown", "Splashdown"),
          "NFSHP2": ("NFS Hot Pursuit 2", "nfshp2", "NFSHP2"),
          "BLACK": ("BLACK", "black", "Black"),
          "PGR1": ("Project Gotham Racing", "pgr1", "PGR1"),
-         "LARush": ("L.A. Rush", "larush", "LARush")}
+         "LARush": ("L.A. Rush", "larush", "LARush"),
+         "VCop3": ("Virtua Cop 3", "vcop3", "VCop3"),
+         "HOTD3": ("The House of the Dead III", "hotd3", "HOTD3"),
+         "OutRun2": ("OutRun 2", "outrun2", "OutRun2")}
+
+CHIHIRO = {
+    "VCop3": {"xbe": "default.xbe", "sha256": "832b6b786ae44acca64ad10aa82621ce86a8e209866259e78821e3d3c396e83c",
+              "input": "VCOP3_SDL_INPUT", "controls": "gun-vcop3", "folder_only": False},
+    "HOTD3": {"xbe": "hod3xb.xbe", "sha256": "89a0e7778002205c114a91bc1797291344b2afeea8b5c7d5085cce7e47dc71de",
+              "input": "HOTD3_SDL_INPUT", "controls": "gun-hotd3", "folder_only": True},
+    "OutRun2": {"xbe": "outrun2.xbe", "sha256": "d98a7efc0ee4ba48b6e938743fa309a9fc774c05713ef735e67d1b17b9bbbd1b",
+               "input": "OUTRUN2_SDL_INPUT", "controls": "driving", "folder_only": True},
+}
+
+
+def image_for(title):
+    return CHIHIRO.get(title, {}).get("xbe", "default.xbe")
+
+
+def verify_image(title):
+    image = ROOT / "ports" / title / "assets" / image_for(title)
+    if title in CHIHIRO:
+        with image.open("rb") as stream:
+            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        if actual != CHIHIRO[title]["sha256"]:
+            raise ValueError(f"{title}: {image.name} does not match this port's executable")
+    return image
 
 
 def sdk_for(title):
     sdk = ROOT / "sdk"
-    if title not in {"Splashdown", "LARush"}:
+    if title not in {"Splashdown", "LARush"} and title not in CHIHIRO:
         return sdk
     slug = title.lower()
-    overlay = ROOT / "overlays" / (slug + "-sdk.patch")
-    digest = hashlib.sha256(overlay.read_bytes())
+    if title in CHIHIRO:
+        slug = "chihiro"
+        overlays = [ROOT / "overlays/chihiro" / name for name in (
+            "chihiro-memory.patch", "flush-guest-push.patch", "buffer-envelope.patch",
+            "indexed-up.patch", "controller-capabilities.patch", "target-alpha.patch")]
+    else:
+        overlays = [ROOT / "overlays" / (slug + "-sdk.patch")]
+    # Keep existing retail-port cache identities when adding a new family.
+    digest = hashlib.sha256(overlays[0].read_bytes()) if len(overlays) == 1 else hashlib.sha256()
+    if len(overlays) > 1:
+        for overlay in overlays:
+            digest.update(overlay.name.encode())
+            digest.update(overlay.read_bytes())
     for path in sorted(sdk.rglob("*")):
         if path.is_file():
             digest.update(str(path.relative_to(sdk)).encode())
@@ -34,8 +71,9 @@ def sdk_for(title):
         if temporary.exists():
             shutil.rmtree(temporary)
         shutil.copytree(sdk, temporary)
-        subprocess.run(["git", "apply", "--check", str(overlay)], cwd=temporary, check=True)
-        subprocess.run(["git", "apply", str(overlay)], cwd=temporary, check=True)
+        for overlay in overlays:
+            subprocess.run(["git", "apply", "--check", str(overlay)], cwd=temporary, check=True)
+            subprocess.run(["git", "apply", str(overlay)], cwd=temporary, check=True)
         (temporary / ".prepared").write_text(digest.hexdigest() + "\n")
         temporary.rename(destination)
     return destination

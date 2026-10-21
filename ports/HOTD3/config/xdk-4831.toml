@@ -1,0 +1,43 @@
+# Fields proven against HOTD3 hod3xb.xbe (SHA-256 recorded in build_headless.py).
+# Instruction addresses below are from this executable's XDK 4831 libraries.
+[layout]
+XPP_Current = 0x0  # XGetDevices 0x163D12 reads the current mask.
+XPP_Changed = 0x4  # XGetDevices 0x163D14 clears the changed mask.
+XPP_Previous = 0x8 # XGetDevices 0x163D1A stores the current mask here.
+CDevice_Push = 0x0          # SetTexture 0x136342 reads the write pointer.
+CDevice_PushThreshold = 0x4 # SetTexture 0x136345 compares its threshold.
+CDevice_BaseVertex = 0x1C   # SetIndices 0x1364F9 stores BaseVertexIndex.
+CDevice_IndexBuffer = 0x38C # SetIndices 0x1364F2 stores the index buffer.
+CDevice_Flags = 0x8        # CreateDevice 0x138013 stores BehaviorFlags & 0x10 at 0x144BC8.
+CDevice_Time = 0x30        # SetTexture 0x136313 copies the device time to the resource.
+CDevice_PixelShader = 0x370 # SetPixelShader 0x140CC8 stores the handle.
+CDevice_VertexShader = 0x380 # SetVertexShader 0x13AC78 stores the object.
+CDevice_VertexShaderHandle = 0x384 # SetVertexShader 0x13AC7E stores the API handle.
+CDevice_ZScale = 0x510     # GetViewportOffsetAndScale 0x138355 scales Z.
+CDevice_SuperSampleX = 0x518 # GetViewportOffsetAndScale 0x1382AE scales X.
+CDevice_SuperSampleY = 0x51C # GetViewportOffsetAndScale 0x1382D0 scales Y.
+CDevice_BackBufferScale = 0x528 # 0x137415/0x13741B store the Y/X scales.
+CDevice_Transforms = 0x810 # SetTransform 0x135A66 copies sixteen dwords at type * 64.
+CDevice_Viewport = 0xA90   # SetViewport 0x135F8B..0x135FAF stores all six fields.
+CDevice_ScreenSpaceOffset = 0xAA8 # GetViewportOffsetAndScale 0x1382BC/0x1382DD reads XY offsets.
+CDevice_Textures = 0xB38   # SetTexture 0x136339 stores the stage pointer.
+CDevice_RenderTarget = 0x21B4 # GetRenderTarget2 0x135E56 reads this pointer.
+CDevice_Depth = 0x21B8     # GetDepthStencilSurface2 0x135E76 reads this pointer.
+CDevice_BackBuffer = 0x21C0 # GetBackBuffer2 0x135E15 indexes zero for the back buffer.
+CDevice_FrontBuffer = 0x21C4 # GetBackBuffer2 0x135E0F selects index one for -1.
+CDevice_AutoDepth = 0x21CC # Initialization 0x13CDC3 passes the auto depth surface.
+CDevice_VBlankCallback = 0x2550 # SetVerticalBlankCallback 0x135BFA stores the callback.
+CDevice_VBlankEvent = 0x2554 # BlockUntilVerticalBlank 0x135C27 waits on this event.
+CDevice_VBlankCount = 0x2580 # Display status 0x136A37 reads it; miniport ISR 0x13E0A1 increments +0x1C0.
+CDevice_GammaRamps = 0x259C # GetGammaRamp 0x135A37 copies 0x300 bytes from this base.
+CDevice_SwapCount = 0x2C10 # Swap 0x137330 increments this counter.
+CDevice_Size = 0x2C30      # CreateDevice 0x13803B clears 0xB0C dwords on failure.
+DirtyFlags_Texture = 0x4800 # SetTexture 0x136377 ORs this mask.
+TextureState_Stage = 32    # SetTextureStageStateNotInline 0x138CCB shifts by five.
+Stream_Size = 12          # SetStreamSource 0x13A85A/0x13A85D multiplies by twelve.
+Stream_Stride = 0x0       # SetStreamSource 0x13A8A2 writes the stride.
+Stream_Buffer = 0x8       # SetStreamSource 0x13A8A8 writes the buffer at entry +8.
+PixelShader_Definition = 0x8 # CreatePixelShader 0x140C61 stores the definition pointer.
+EffectsImage_Skip0 = 0x804 # Effects parser 0x14AA79 adds this dword count.
+EffectsImage_Skip1 = 0x80C # Effects parser 0x14AA73 reads this dword count.
+EffectsImage_Desc = 0x818 # Effects parser 0x14AA82 forms image + 0x818 + (Skip0+Skip1)*4.

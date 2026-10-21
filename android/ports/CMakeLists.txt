@@ -34,7 +34,10 @@ if(XBE_TITLE STREQUAL "BLACK")
     list(APPEND host "${CMAKE_CURRENT_BINARY_DIR}/europe_patch.cpp")
 endif()
 file(GLOB generated CONFIGURE_DEPENDS "${gen}/x86_func_mapping.cpp" "${gen}/x86_recomp.*.cpp")
-file(SHA1 "${XBE_REPO_DIR}/assets/default.xbe" sha)
+if(NOT XBE_GAME_XBE)
+    set(XBE_GAME_XBE "default.xbe")
+endif()
+file(SHA1 "${XBE_REPO_DIR}/assets/${XBE_GAME_XBE}" sha)
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/image_hash.cpp" CONTENT "extern const char kImageSha1[] = \"${sha}\";\n")
 set(imgui "${XBE_DEPS_SOURCE}/imgui-src")
 add_library(main SHARED ${runtime} ${host} ${game} ${generated}
@@ -48,6 +51,9 @@ target_include_directories(main SYSTEM PRIVATE "${imgui}" "${XBE_DEPS_SOURCE}/vm
     "${XBE_DEPS_SOURCE}/tomlplusplus-src/include" "${XBE_DEPS_SOURCE}/glslang-src")
 target_compile_definitions(main PRIVATE _stricmp=strcasecmp _strnicmp=strncasecmp ENABLE_HLSL=1
     XBE_LOG_VERBOSE_DEFAULT=1 XBE_ANDROID_LOG_TAG="${XBE_TITLE}")
+if(XBE_INPUT_DEFINE)
+    target_compile_definitions(main PRIVATE "${XBE_INPUT_DEFINE}=1")
+endif()
 target_compile_options(main PRIVATE -fno-strict-aliasing -Wno-parentheses-equality)
 set_source_files_properties(${generated} PROPERTIES COMPILE_OPTIONS "-w")
 target_link_libraries(main PRIVATE SDL3
