@@ -78,6 +78,6 @@
 +    }
 +}
 +
- TEST("render: the depth test keeps the nearer of two overlapping triangles in either order") {
+ TEST("render: thin block-compressed textures keep their logical sampling extent") {
      REQUIRE(Vulkan());
-     GuestBuffer near_tri(RhwDiffuse({{{4, 4, 0.2f, 1}}, {{60, 4, 0.2f, 1}}, {{32, 60, 0.2f, 1}}},
+     GuestBuffer vb({0, 0, 0.5f, 1, 0, 0, 64, 0, 0.5f, 1, 1, 0,

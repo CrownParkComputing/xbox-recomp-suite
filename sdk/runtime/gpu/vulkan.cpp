@@ -1346,11 +1346,8 @@ bool VulkanRenderer::CreateTexture(Tex& tx, const TextureDesc& d, const FormatIn
     tx.fmt = HostFormat(fi.host);
     uint32_t w = d.width, h = d.height;
     tx.levels = d.levels;
-    if (IsBlockCompressed(tx.fmt) && ((w & 3) || (h & 3))) {
-        w = (w + 3) & ~3u;
-        h = (h + 3) & ~3u;
-        tx.levels = 1;
-    }
+    // Compressed storage uses whole blocks, but the image keeps its logical
+    // extent. Enlarging a thin ramp exposes the unused block rows to sampling.
     ImageDesc id;
     id.format = tx.fmt;
     id.w = w;
@@ -1419,6 +1416,18 @@ Image* VulkanRenderer::BindGuestTexture(const State& s, int stage, const Texture
             g_perf.texups++;
             g_perf.texup_bytes += total;
             tx.sig = sig;
+            // Are the texels there at all? A title that uploads a frame of
+            // zeroes shows a black quad, and nothing else says so.
+            if (diag::Perf()) {
+                static uint32_t line = 0;
+                if (line++ % 60 == 0) {
+                    uint64_t lit = 0;
+                    for (uint64_t i = 0; i + 3 < total; i += 4)
+                        if (p[i] || p[i + 1] || p[i + 2] || p[i + 3]) lit++;
+                    LOGI("vulkan: stage %d uploads %u bytes, %llu non-zero pixels of %llu", stage, total,
+                         (unsigned long long)lit, (unsigned long long)(total / 4));
+                }
+            }
             UploadTexture(tx, d, p, palette.va ? palette.colours : nullptr);
         }
     }

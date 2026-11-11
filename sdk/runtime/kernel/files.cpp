@@ -661,7 +661,12 @@ KERNEL_EXPORT(207, NtQueryDirectoryFile, 10) {
         LOG_FIRST(8, "NtQueryDirectoryFile: class %u", cls);
         return kInvalidParameter;
     }
+    // The XAPI's FindFirstFile sets the FileName string's length to zero when the pattern is "*.*"
+    // (0x22E3E5 in Panzer Dragoon Orta's image): the console's FATX driver reads an empty pattern as
+    // every entry. Matched literally it selects nothing, so a title that mirrors the disc's folders
+    // onto its cache partition creates none of them and then fails every cached write beneath them.
     std::string pat = mask ? ReadAnsiString(mask) : "*";
+    if (pat.empty()) pat = "*";
     if (!f->listed || (restart & 0xFF)) {
         f->entries.clear();
         f->disc_entries.clear();
@@ -733,8 +738,37 @@ KERNEL_EXPORT(200, NtFsControlFile, 10) {
     return kSuccess;
 }
 
+// The XAPI finishes process initialization only after it proves the title's own media is in the
+// drive, for a title whose certificate allows DVD media alone: it opens \Device\Cdrom0 and sends
+// MODE SENSE(10) for the drive's vendor page 0x3E through IOCTL_SCSI_PASS_THROUGH_DIRECT. The
+// supplied game files are that media here, so answer as the drive does with the disc in it.
+// Only the three page bytes the XAPI reads are known, from its own code: the second carries the
+// media type it accepts, 1, and any other value is STATUS_UNRECOGNIZED_MEDIA; the first and third
+// must be non-zero. The rest of the vendor page is unproven and stays zero. Without this answer
+// the XAPI boots to the dashboard before it mounts the utility drive (Z:), creates the title data
+// links or runs the image's static initializers.
+static bool ScsiXboxMediaPage(uint32_t in, uint32_t in_len) {
+    if (in_len < 0x2C) return false;  // SCSI_PASS_THROUGH_DIRECT
+    uint32_t cdb = in + 0x1C;
+    if (G<uint8_t>(cdb) != 0x5A || (G<uint8_t>(cdb + 2) & 0x3F) != 0x3E) return false;
+    uint32_t buf = R32(in + 0x14), len = R32(in + 0xC);
+    if (!buf || len < 13 || len > 0x1000) return false;
+    auto* p = static_cast<uint8_t*>(HostPtr(buf));
+    std::memset(p, 0, len);
+    p[0] = uint8_t((len - 2) >> 8);  // mode parameter header: data length, no block descriptors
+    p[1] = uint8_t(len - 2);
+    p[8] = 0x3E;                     // the page the drive was asked for
+    p[9] = uint8_t(len - 10);
+    p[10] = 1;
+    p[11] = 1;  // the media type the XAPI accepts
+    p[12] = 1;
+    G<uint8_t>(in + 2) = 0;  // ScsiStatus GOOD
+    LOG_FIRST(4, "scsi: mode sense page 3E answered as the title's own disc");
+    return true;
+}
+
 KERNEL_EXPORT(196, NtDeviceIoControlFile, 10) {
-    uint32_t iosb = a[4], code = a[5], out = a[8], out_len = a[9];
+    uint32_t iosb = a[4], code = a[5], in = a[6], in_len = a[7], out = a[8], out_len = a[9];
     LOG_FIRST(16, "NtDeviceIoControlFile: code %08X", code);
     if (out && out_len) std::memset(HostPtr(out), 0, out_len);
     if (code == 0x70000 && out_len >= 0x18) {  // IOCTL_DISK_GET_DRIVE_GEOMETRY
@@ -743,6 +777,10 @@ KERNEL_EXPORT(196, NtDeviceIoControlFile, 10) {
         W32(out + 12, 255);
         W32(out + 16, 63);
         W32(out + 20, 512);
+    }
+    if (code == 0x4D014) {  // IOCTL_SCSI_PASS_THROUGH_DIRECT: a command for the drive itself
+        auto f = FileFromHandle(a[0]);
+        if (f && Upper(Normalize(f->xbox)) == kCdRom) ScsiXboxMediaPage(in, in_len);
     }
     IoStatus(iosb, kSuccess, out_len);
     return kSuccess;

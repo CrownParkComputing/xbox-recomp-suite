@@ -1,9 +1,12 @@
 # Shared Android sources
 
-The ten ports share the SDL Java integration, remembered ISO/folder picker,
+The ports share the SDL Java integration, remembered ISO/folder picker,
 dedicated native process lifecycle, document-tree JNI reader, and glslang shader
 adapter in this directory. Build with `python3 tools/build_android.py <title>`
 from the repository root; do not invoke the old standalone packaging commands.
+The original ten ports have Android build evidence. Panzer Dragoon Orta and
+Ghoulies are new Linux ports; their Android builds and device operation remain
+unvalidated.
 
 - [Build prerequisites and commands](../docs/BUILDING.md)
 - [Controls, SD data, lifecycle and device checks](../docs/ANDROID.md)

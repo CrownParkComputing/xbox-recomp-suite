@@ -53,7 +53,28 @@
       "source_commit": "32f8454be6ae923c229cccbd5238322889e183d8",
       "overlay_directory": "overlays/chihiro",
       "validation": "Linux gameplay snapshot retained; Android ARM64 APK build and host-side input checks; Android device validation pending"
+    },
+    "PDOrta": {
+      "source_checkout": "ports/PDOrta (developed in Xbox Recomp Suite)",
+      "upstream_commit": null,
+      "matching_xbe_sha256": "c1af4eafccc02e11105d606b177263216cb7aa71bf1fbe8486ddfc3b1b848d2c",
+      "xdk": 4928,
+      "reference_comparison": {
+        "repository": "https://github.com/wootbeer/ortarecomp",
+        "commit": "5f396c90ad7a59ac5a07204102bfbfab140d32f2",
+        "scope": "CRI synchronization, guest CPU scheduling and controller API behaviour"
+      },
+      "validation": "Linux movies, menus and active Episode 1 movement/shooting with pause/resume; later episodes, saves, audio fidelity, bonus PD1 image and Android unvalidated"
+    },
+    "Ghoulies": {
+      "source_checkout": "ports/Ghoulies (developed in Xbox Recomp Suite)",
+      "upstream_commit": null,
+      "matching_xbe_sha256": "a2a5bbe51ecc11392612bad30ee4238b796d4d0ed7262e7d23dc4120388294b1",
+      "xdk": 5659,
+      "overlay": "overlays/larush-sdk.patch",
+      "validation": "Linux intro with smoke, coloured book covers and offscreen output after thin compressed-ramp fix; gameplay, menus, saves, audio, bonus CDX player and Android unvalidated"
     }
   },
-  "larush_overlay": "overlays/larush-sdk.patch"
+  "larush_overlay": "overlays/larush-sdk.patch",
+  "last_updated": "2026-11-11"
 }

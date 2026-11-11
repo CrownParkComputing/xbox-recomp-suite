@@ -16,7 +16,9 @@ PORTS = {"Splashdown": ("Splashdown", "splashdown", "Splashdown"),
          "LARush": ("L.A. Rush", "larush", "LARush"),
          "VCop3": ("Virtua Cop 3", "vcop3", "VCop3"),
          "HOTD3": ("The House of the Dead III", "hotd3", "HOTD3"),
-         "OutRun2": ("OutRun 2", "outrun2", "OutRun2")}
+         "OutRun2": ("OutRun 2", "outrun2", "OutRun2"),
+         "PDOrta": ("Panzer Dragoon Orta", "pdorta", "PDOrta"),
+         "Ghoulies": ("Grabbed by the Ghoulies", "ghoulies", "Ghoulies")}
 
 CHIHIRO = {
     "VCop3": {"xbe": "default.xbe", "sha256": "832b6b786ae44acca64ad10aa82621ce86a8e209866259e78821e3d3c396e83c",
@@ -44,16 +46,19 @@ def verify_image(title):
 
 def sdk_for(title):
     sdk = ROOT / "sdk"
-    if title not in {"Splashdown", "LARush"} and title not in CHIHIRO:
+    # Ghoulies' XACT engine needs the same DSOUND voice bridges as L.A. Rush.
+    overlays_for = {"Splashdown": "splashdown-sdk.patch", "LARush": "larush-sdk.patch",
+                    "Ghoulies": "larush-sdk.patch"}
+    if title not in overlays_for and title not in CHIHIRO:
         return sdk
     slug = title.lower()
     if title in CHIHIRO:
         slug = "chihiro"
         overlays = [ROOT / "overlays/chihiro" / name for name in (
             "chihiro-memory.patch", "flush-guest-push.patch", "buffer-envelope.patch",
-            "indexed-up.patch", "controller-capabilities.patch", "target-alpha.patch")]
+            "controller-capabilities.patch", "target-alpha.patch")]
     else:
-        overlays = [ROOT / "overlays" / (slug + "-sdk.patch")]
+        overlays = [ROOT / "overlays" / overlays_for[title]]
     # Keep existing retail-port cache identities when adding a new family.
     digest = hashlib.sha256(overlays[0].read_bytes()) if len(overlays) == 1 else hashlib.sha256()
     if len(overlays) > 1:

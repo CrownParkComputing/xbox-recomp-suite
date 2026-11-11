@@ -28,13 +28,14 @@ python3 tools/prepare.py all
 python3 tools/build_linux.py Splashdown --generate-only --jobs 4
 ```
 
-The shared SDK is used directly for five ports. Splashdown and L.A. Rush each
-get a derived SDK under `.local/sdks/`, produced by applying their respective
-`overlays/splashdown-sdk.patch` and `overlays/larush-sdk.patch` to `sdk/`.
+Six ports, including Panzer Dragoon Orta, use the shared `sdk/` directly.
+Splashdown gets a derived SDK under `.local/sdks/` from
+`overlays/splashdown-sdk.patch`. L.A. Rush and Ghoulies each get a derived SDK
+from `overlays/larush-sdk.patch`, which supplies their shared XACT voice bridges.
 The tool installs relative, ignored `sdk` links into each port. Do not apply the
 older historical Splashdown patch series on top of this prepared SDK.
 The original seven-patch history is retained under `ports/Splashdown/patches`.
-The three Chihiro ports share a separate prepared SDK with the six patches in
+The three Chihiro ports share a separate prepared SDK with the five patches selected from
 `overlays/chihiro/`; the retail Xbox ports' SDKs remain separate.
 
 Generated guest C++ lives in the port's ignored `generated/` directory. It must
@@ -142,3 +143,20 @@ After generating the corresponding private guest code, mixer checks are availabl
 python3 ports/PGR1/tools/build_audio_smoke.py --run
 python3 ports/BLACK/tools/build_audio_smoke.py
 ```
+
+### Panzer Dragoon Orta and Grabbed by the Ghoulies
+
+Use build title `PDOrta` or `Ghoulies` with the Linux commands above. Both use
+`assets/default.xbe`, their own symbol configuration and a proven XDK layout:
+4928 for Orta and 5659 for Ghoulies. Ghoulies reuses the L.A. Rush SDK overlay.
+The validated USA executables have these SHA-256 hashes:
+
+| Title | SHA-256 |
+| --- | --- |
+| `PDOrta` | `c1af4eafccc02e11105d606b177263216cb7aa71bf1fbe8486ddfc3b1b848d2c` |
+| `Ghoulies` | `a2a5bbe51ecc11392612bad30ee4238b796d4d0ed7262e7d23dc4120388294b1` |
+
+Orta's `PD1.xbe` and Ghoulies' `cdx.xbe` require separate recompiled images and
+are not included in these targets. Android staging uses the shared tooling;
+Android native builds and device behaviour have not been validated for either
+port. See their `PORT_STATUS.md` files for the Linux evidence and limits.

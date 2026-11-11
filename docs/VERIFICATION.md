@@ -1,4 +1,37 @@
-# Verification record — updated 2026-10-21
+# Verification record — updated 2026-11-11
+
+## Orta and Ghoulies additions (2026-11-11)
+
+The collection now includes twelve source ports. The two newest additions have
+Linux evidence; earlier Android verification below does not apply to them.
+
+- **Panzer Dragoon Orta:** logos/title, progressing CRI movies, menus and active
+  Episode 1 flight/combat verified. A run continued to 255 seconds with movement,
+  shooting and pause/resume, without a guest trap or missing indirect call.
+  Later episodes, bosses, saves, audio fidelity and the bonus PD1 image remain
+  unvalidated. See [PORT_STATUS.md](../ports/PDOrta/PORT_STATUS.md).
+- **Grabbed by the Ghoulies:** the intro renders animated smoke, the Rare and
+  Microsoft book covers, and opening pages. Preserving the logical extent of
+  thin DXT1 ramps fixes black shader output; Bink pixels already matched the GPU
+  upload exactly, including alpha. The clean build stayed alive through 28-second
+  captures and exited normally at 29 seconds. Gameplay, menus, saves, audio and
+  the CDX bonus player remain unvalidated. See
+  [PORT_STATUS.md](../ports/Ghoulies/PORT_STATUS.md).
+
+The focused compressed-texture regression fails before the fix and matches the
+CPU reference exactly afterwards for all four thin dimensions. All 23 shared
+renderer cases pass. New guest-CPU concurrency/yield checks and wrapped-audio
+symbol-import checks cover the supporting runtime changes. Collection integration
+also passes all 84 SDK cases, 12 host-runtime cases, 10 symbol-import cases and
+three APK-payload audit cases. Both Linux targets build; both Android source
+staging commands succeed. SDK preparation succeeds for all twelve titles after
+rebasing the older overlays and retiring duplicate indexed-UP bridges. The
+prepared Splashdown and Chihiro D3D bridges also pass a compile check. Orta
+launches cleanly after removing temporary diagnostics. The Git-index source
+audit passes, including all 8963 pinned dependency files.
+No game content,
+generated guest code, builds or private proof captures are added to the source
+collection.
 
 ## Chihiro Android additions
 

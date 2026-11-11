@@ -28,6 +28,18 @@ X86Func* Find(uint32_t guest);
 #define SYM_IDirectSound_GetCaps FFFFFF0D
 #define HAS_IDirectSound_GetCaps 0
 #endif
+#ifndef SYM_IDirectSoundBuffer_AddRef
+#define SYM_IDirectSoundBuffer_AddRef FFFFFF0F
+#define HAS_IDirectSoundBuffer_AddRef 0
+#endif
+#ifndef SYM_IDirectSoundBuffer_Pause
+#define SYM_IDirectSoundBuffer_Pause FFFFFF10
+#define HAS_IDirectSoundBuffer_Pause 0
+#endif
+#ifndef SYM_IDirectSound_CreateSoundStream
+#define SYM_IDirectSound_CreateSoundStream FFFFFF11
+#define HAS_IDirectSound_CreateSoundStream 0
+#endif
 #ifndef SYM_IDirectSound_SynchPlayback
 #define SYM_IDirectSound_SynchPlayback FFFFFF00
 #define HAS_IDirectSound_SynchPlayback 0
@@ -478,6 +490,8 @@ static void AuditExports() {
         SYM(IDirectSoundBuffer_SetFormat), SYM(IDirectSoundBuffer_SetOutputBuffer), SYM(IDirectSoundBuffer_SetRolloffCurve),
         SYM(IDirectSoundBuffer_StopEx), SYM(IDirectSoundBuffer_SetMode),
         SYM(XAudioDownloadEffectsImage), SYM(DirectSoundCreateBuffer), SYM(IDirectSound_CreateSoundBuffer),
+        SYM(IDirectSound_CreateSoundStream),
+        SYM(IDirectSoundBuffer_AddRef), SYM(IDirectSoundBuffer_Pause),
         SYM(IDirectSoundBuffer_Release), SYM(IDirectSoundBuffer_Unlock), SYM(IDirectSoundBuffer_SetBufferData),
         SYM(IDirectSoundBuffer_Play), SYM(IDirectSoundBuffer_Stop), SYM(IDirectSoundBuffer_SetLoopRegion),
         SYM(IDirectSoundBuffer_GetStatus), SYM(IDirectSoundBuffer_GetCurrentPosition), SYM(IDirectSoundBuffer_SetCurrentPosition),
@@ -662,6 +676,12 @@ HLE_STDCALL(IDirectSound_CreateSoundBuffer, 4) { return NewBuffer(a[1], a[2]); }
     }                                                       \
     static uint32_t buf_##name([[maybe_unused]] Voice& v, [[maybe_unused]] const Args& a)
 
+BUFFER(AddRef, 1) { return uint32_t(++v.refs); }
+BUFFER(Pause, 2) {
+    v.paused = a[1] == 1;
+    v.sync = a[1] == 2;
+    return 0;
+}
 BUFFER(Release, 1) {
     if (--v.refs > 0) return uint32_t(v.refs);
     if (v.owned) mem::FreeContiguous(v.owned);
@@ -815,12 +835,16 @@ BUFFER(SetFormat, 2) {
 
 // streams, the object carries the XDK's own vtable
 
-HLE_STDCALL(DirectSoundCreateStream, 2) {
+// Two entry points create a stream: the global DirectSoundCreateStream(desc, out)
+// and the IDirectSound COM method CreateSoundStream(this, desc, out, outer).
+// Letting either reach the guest's own CDirectSoundStream constructor walks the
+// host mixer's DS object with Xbox COM vtables and faults (Grabbed by the
+// Ghoulies' XACT startup). Both go through the software mixer instead.
+static uint32_t NewStream(uint32_t desc, uint32_t out) {
     XDK_REQUIRE("dsound", XDK_KEY(CDirectSoundStream_Vtable), XDK_KEY(CDirectSoundStream_Vtable2),
                 XDK_DATA(DSound_StreamVtable), XDK_DATA(DSound_StreamVtable2));
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     Start();
-    uint32_t desc = a[0];
     uint32_t obj = mem::AllocSystem(0x80);
     std::memset(HostPtr(obj), 0, 0x80);
     W32(obj + XDK_CDirectSoundStream_Vtable, kStreamVtable);
@@ -836,9 +860,12 @@ HLE_STDCALL(DirectSoundCreateStream, 2) {
     SetBins(v, R32(desc + 20));
     v.is3d = flags & 0x10;  // DSBCAPS_CTRL3D
     v.headroom = DefaultHeadroom(flags);
-    W32(a[1], obj);
+    W32(out, obj);
     return 0;
 }
+
+HLE_STDCALL(DirectSoundCreateStream, 2) { return NewStream(a[0], a[1]); }
+HLE_STDCALL(IDirectSound_CreateSoundStream, 4) { return NewStream(a[1], a[2]); }
 
 #define STREAM(name, nargs)                                     \
     static uint32_t str_##name(Voice& v, const Args& a);        \

@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "kernel/kernel.h"
+#include "kernel/guest_cpu.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -18,6 +19,7 @@ namespace kernel {
 namespace {
 
 thread_local ThreadRef t_current;
+GuestCpu g_guest_cpu;
 std::mutex g_threads_lock;
 std::vector<ThreadRef> g_threads;
 std::atomic<uint32_t> g_next_id{0x10};
@@ -77,6 +79,9 @@ void Unregister(Thread* t) {
 void MarkExited(Thread& t, uint32_t code) {
     t.exit_code = code;
     std::lock_guard<std::mutex> lock(DispatchLock());
+    // XAPI GetExitCodeThread references the ETHREAD and reads ExitStatus
+    // directly at +0x120 once Header.SignalState says the thread exited.
+    W32(t.ethread + 0x120, code);
     SetSignal(t, 1);
     SignalChanged();
 }
@@ -126,6 +131,20 @@ void Spawn(std::function<void()> fn) {
 Thread* Current() { return t_current.get(); }
 ThreadRef CurrentRef() { return t_current; }
 X86Context& CurrentContext() { return *t_current->ctx; }
+
+void SerializeGuestCpu() { g_guest_cpu.Enable(); }
+bool GuestCpuLeave() { return g_guest_cpu.Leave(); }
+bool GuestCpuEnter() {
+    if (!g_guest_cpu.Enabled()) return false;
+    for (;;) {
+        // Never park a suspended thread while it owns the guest CPU. Check
+        // again after acquiring it: another guest may have suspended us.
+        SuspendPoint();
+        bool acquired = g_guest_cpu.Enter();
+        if (!acquired || !Current() || Current()->suspend.load() <= 0) return acquired;
+        g_guest_cpu.Leave();
+    }
+}
 
 std::vector<ThreadRef> Threads() {
     std::lock_guard<std::mutex> lock(g_threads_lock);
@@ -200,6 +219,7 @@ void StartHostThread(const char* name, std::function<void(X86Context&)> fn) {
 }
 
 void ExitThread(uint32_t code) {
+    GuestCpuLeave();  // pthread_exit/ExitThread need not unwind host scopes
     Thread* t = Current();
     if (t) {
         LOGI("thread %X exits with %08X", t->id, code);
@@ -230,6 +250,7 @@ void SuspendPoint() {
     Thread* t = Current();
     if (t && t->ctx) HostPausePoint(*t->ctx);
     if (!t || t->suspend.load() <= 0) return;
+    GuestYield yield;
     std::unique_lock<std::mutex> lock(t->apc_lock);
     t->resume_cv.wait(lock, [&] { return t->suspend.load() <= 0; });
 }

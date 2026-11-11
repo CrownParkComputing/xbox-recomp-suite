@@ -326,3 +326,167 @@ uninstall an existing app to overcome a signature mismatch.
 Keep a title's executable mapping consistent with CMake's actual output name.
 BLACK's `Black` mapping differed from its Linux `BLACK` executable; Linux image
 relaunch is case-sensitive, so the mapping now uses the actual output name.
+
+### Panzer Dragoon Orta: a refused host action hides a skipped XAPI init (2026-11-05)
+
+Orta booted to a black screen and, after 11–38 s, asked to launch an image with an empty path.
+The empty path was the clue: `XLaunchNewImageA(NULL, ...)` is `XapiBootToDash`, and the XAPI only
+reaches it from a failure. The chain, all proven in the image:
+
+- The certificate's AllowedMedia (`cert + 0x9C`) is `0x00000002`, DVD only. `XapiInitProcess` then
+  verifies the media before it finishes: it opens `\Device\Cdrom0` and sends MODE SENSE(10) for the
+  drive's vendor page `0x3E` through `IOCTL_SCSI_PASS_THROUGH_DIRECT` (`0x4D014`), five times.
+- A zero-filled answer reads as `STATUS_UNRECOGNIZED_MEDIA`, so the XAPI booted to the dashboard.
+  The runtime refuses that launch, the call returns, and the title keeps running — with the rest of
+  its process initialization never done: no utility drive (`Z:`), no `T:`/`U:` links, no parental
+  ratings check, no static initializer table.
+- The runtime now answers that one mode page in `NtDeviceIoControlFile`. Only the three bytes the
+  XAPI reads are known from its own code; the rest of the vendor page stays zero.
+
+Two lessons carry forward. First, read the certificate before blaming the title: AllowedMedia and
+the XBE init flags (header `+0x124`: bit 0 mounts the utility drive, bit 1 formats it) decide which
+of these paths a title takes at all. Four more ports in this suite ship AllowedMedia `0x2`.
+Second, a host refusal is a silent fork in the guest's control flow, not an endpoint. Every
+"refused"/"not supported" line deserves the question of what the title had queued behind it.
+
+### Enumerating a directory: "*.*" arrives as an empty pattern
+
+With `Z:` mounted, Orta still spun: 21 865 opens of one sprite in 12 s, each preceded by a failed
+create of `z:\sprite\<name>.tmp`. The parent folder did not exist, and the title never created it,
+because its cache mirror walks `d:\` with `FindFirstFile("d:\*.*")` — and the XAPI zeroes the
+`FileName` string's length for the pattern `*.*` (`0x22E3E5` in this image). FATX reads an empty
+pattern as every entry; `NtQueryDirectoryFile` matched it literally and returned nothing, so the
+walk found no folders to mirror and every cached write below one failed forever.
+
+`NtQueryDirectoryFile` now treats an empty pattern as `*`. Expect the same shape elsewhere: a
+title that enumerates its own files, finds none, and then fails somewhere far from the enumeration.
+
+### Counting a spin, then placing it
+
+The useful order for a title that is running but making no progress:
+
+1. `XBE_PERF=1` separates "stuck" from "ticking but drawing nothing": the per-second line reports
+   draws, vertices, uploads and texture counts, and a frame loop with `0 draws` is a different
+   problem from a frozen one.
+2. `strace -f -e trace=openat` (or `mkdirat`, `renameat`) counts a retry loop without touching the
+   build and names the exact path being retried. Kill the traced process, not just `strace`, or the
+   title keeps running and the next run's log and cache partition are shared with a ghost.
+3. A temporary, env-gated stack log in the kernel export that the loop calls places it in the
+   title's own code (`LogGuestStack` prints the return addresses on the guest stack). Remove it
+   once the guest function is identified; the generated `x86_recomp.*.cpp` then reads like a
+   disassembly listing and the surrounding logic is usually obvious.
+4. F3 dumps every guest thread's stack, and with `XBE_CAPTURE_DIR` set it also captures a frame.
+   It needs the game window focused. On this Wayland desktop `ydotool` never reaches the
+   compositor, but a uinput device created directly (python-evdev: a virtual keyboard, or a pad
+   that SDL picks up from `/dev/input`) does.
+
+An XDK 4928 layout now exists at `sdk/xdk/4928/layout.toml`, proven from Orta's draw path; every
+proven field matched 4721.
+
+### Grabbed by the Ghoulies: name the exports from .XTLID, not only from OOVPA (2026-11-05)
+
+An XBE keeps a `.XTLID` section: pairs of (XTL export id, address) for every library function the
+linker kept. The high 16 bits are the library (8 = D3D8, 0xB = DSOUND, …) and the ids are stable
+across XDK builds, so the SDK's `signatures.toml` entries - which record `xtlid` per name - resolve
+names in an image whose build has no signature set at all. On Ghoulies (XDK 5659) that matched 41
+names: 40 agreed with XbSymbolDatabase's OOVPA scan exactly and one was found that OOVPA missed.
+Use it as a cross-check on every imported address before trusting a config, and as the source for
+the ones OOVPA cannot match.
+
+The ids are also assigned in alphabetical order within a library, so an id with no SDK name can
+still be placed between two named neighbours: `0xB0055` sits between `IDirectSoundBuffer_GetStatus`
+and `_Lock`, which makes it `GetVoiceProperties`, and `0xB0076` between `_SetOutputBuffer` and
+`_SetPlayRegion`, which makes it `SetPitch`. Treat that as a hypothesis to confirm against the
+function's own code, not as proof.
+
+Because the ids are stable they also carry a *working port's* hooks across to a new one. L.A. Rush's
+XACT voice bridges are game-specific `X86_FUNC(sub_<address>)` hooks; each of those addresses is a
+`.XTLID` entry, so look the id up in the new XBE's `.XTLID` and you have the new address without
+disassembling it. Internal thunks that are not exported sit at the same fixed offsets from an
+exported neighbour (`+0x1C`, `+5` in this pair of images), so cluster shape resolves those too.
+This is how Ghoulies (XDK 5659) got L.A. Rush's `Use3DVoiceData`, `Set3DVoiceData`,
+`GetVoiceProperties`, `SetPitch` and `SetOutputBuffer` bridges; verify a couple of the derived
+bodies against the generated C++ before trusting the whole batch. Compare the body of a COM thunk
+to name it carefully: every `IDirectSoundBuffer` method subtracts `0x1C` from the interface
+pointer, so that shape alone does not distinguish `Pause` from `Use3DVoiceData`.
+
+An absent `D3DDevice_BeginPush` silently drops geometry. The HLE `EndPush` only executes the
+inline push buffer when the HLE `BeginPush` has handed out a scratch pointer; with the symbol 0,
+`g_push_begin` stays 0, `Execute` is skipped and every raw push command written between the pair
+is lost. The title still draws its normal API geometry, so this looks like "some objects are
+missing" rather than a crash. Find the guest `BeginPush` by pairing its call sites with `EndPush`
+in the generated code (Ghoulies: `0x177250` / `0x177270`), then map it. A signature scan can
+report `BeginPush = {}` — an empty signature is not evidence the function is absent. After
+mapping, recorded draws per frame rose from ~138 to 173-323 and the missing candle flame, hand
+and book detail appeared.
+
+The rest of what this port needed on its first day, all in the shared SDK:
+
+- **Do not require a layout key the image cannot have.** `Direct3D_CreateDevice` demanded
+  `CDevice_IndexBuffer`, but this image has no `D3DDevice_SetIndices` - the linker dropped it, and
+  no code in its D3D section ever stores the field. A key that only one function reads belongs in
+  that function's `XDK_REQUIRE`, so a title that never calls it still boots.
+- **Catch SIGSEGV.** The crash handler covered SIGABRT, SIGFPE, SIGILL and SIGBUS. A guest that
+  walks off its address space is the common bring-up fault, and without the handler it died with no
+  guest stack at all. It now covers SIGSEGV and still re-raises for the core dump.
+- **Back the APU sample counter.** A title's audio engine may read the APU register at
+  `0xFE80200C` directly instead of asking DSOUND for the time - Ghoulies' XACT clock does, and
+  converts the value with 48000 samples and 10000 units of 100 ns. The kernel now commits that page
+  and keeps the counter moving on the pause-aware game clock. Nothing else of the APU block is
+  modelled; expect other registers to need the same treatment.
+- **A null `D3D_FvfShader` kills the first draw.** The device's current vertex shader object stays
+  null without it, and the first push-buffer state emit dereferences it. Find the device init's
+  store into `CDevice_VertexShader` and record it in `[data]`; Panzer Dragoon Orta needed the same.
+
+### Orta: movies and gameplay need the guest's CPU and API boundaries (2026-11-10)
+
+Comparing with [wootbeer/ortarecomp](https://github.com/wootbeer/ortarecomp/tree/5f396c90ad7a59ac5a07204102bfbfab140d32f2)
+exposed four gaps after the title rendered. CRI's priority-based lock assumes one
+Xbox CPU: use a recursive host mutex for its regions and server passes, and give
+up the guest CPU while waiting for that mutex. Orta now opts into guest execution
+serialization, with kernel callbacks on the same CPU and cooperative suspension
+at reacquisition. Its syscall-free spin helper needs an explicit yield too.
+
+Then test teardown and active play. XAPI `GetExitCodeThread` reads the guest
+ETHREAD's ExitStatus at `+0x120`; updating only a host field left movie teardown
+waiting forever after its worker exited. `IDirectSoundBuffer_AddRef` and Pause
+must be replaced when buffers are host objects. `DrawIndexedVerticesUP` must also
+reach the host backend: leaving the original API running divided by uninitialized
+hardware vertex state in Episode 1. For an indexed UP draw, upload through
+`max(index) + 1`, use the caller's stream with base vertex zero, then restore the
+prior stream and base vertex. The shared API now does this.
+
+A translated body is not necessarily an indirect dispatch entry. Three graphics
+methods in the vtable at `0x332D00` had bodies reached from preceding padding but
+no mapping at the actual vtable addresses. Seed those actual addresses in
+`[functions]` and inspect neighboring class tables for the same issue. Orta's
+port status records the resulting movie and Episode 1 checks and their limits.
+
+### Temporary diagnostics must be safe for every port (2026-11-10)
+
+The Orta bring-up left `LOG_FIRST(6, "d3d: TEMP EndPush ...")` in the shared
+`D3DDevice_EndPush`. Its arguments read `R32(g_push_begin)` and the next two
+words unconditionally, so a port with no `D3DDevice_BeginPush` (Grabbed by the
+Ghoulies, `0` in its config) faults on its very first `EndPush`: GDB showed
+`sub_00177270 + 84` doing `mov (%rsi,%rdx,1),%r9d` with a zero head. Guard a
+diagnostic with the condition that makes its reads valid, and rebuild another
+port (Orta was rebuilt here) before assuming a shared change is harmless. A
+`TEMP` log is still production code for the nine ports that share the SDK.
+
+### Thin compressed textures keep their logical image extent (2026-11-11)
+
+Ghoulies' decoded Bink smoke texture matched GPU memory byte for byte, including
+alpha, yet the effect and an offscreen pass still appeared black. Both shaders
+also sampled DXT1 ramps only two pixels high. The Vulkan renderer enlarged those
+images from 16x2/256x2 to 16x4/256x4, exposing unused black block rows to normalized
+texture coordinates. Keep the image extent and mip count from the guest; round
+only compressed storage rows and byte counts to complete blocks. Vulkan permits
+partial blocks at image edges, as described in the
+[Khronos image-copy guide](https://docs.vulkan.org/guide/latest/image_copies.html#_partial_texel_block).
+
+A useful regression gives valid texels one colour and padding texels another,
+then compares rendered pixels against the logical image. The four thin-extent
+cases fail before this fix and match the CPU reference exactly afterwards.
+Capture the actual source texture before diagnosing a movie upload failure;
+a black cleared target in a frame with no contributing draws is insufficient
+evidence. See Ghoulies' port status for the resulting smoke/book-cover captures.

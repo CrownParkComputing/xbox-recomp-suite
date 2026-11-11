@@ -32,8 +32,12 @@ All commands below run from the suite root. Title names are case-sensitive:
 | Virtua Cop 3 (MYSTRO) | `VCop3` | `VCop3` | `com.vcop3.recomp` |
 | The House of the Dead III | `HOTD3` | `HOTD3` | `com.hotd3.recomp` |
 | OutRun 2 (Chihiro 2.000) | `OutRun2` | `OutRun2` | `com.outrun2.recomp` |
+| Panzer Dragoon Orta | `PDOrta` | `PDOrta` | Unvalidated |
+| Grabbed by the Ghoulies | `Ghoulies` | `Ghoulies` | Unvalidated |
 
-Each APK is `dist/<title>-arm64-debug.apk`. Each Linux executable is under
+The original ten ports have Android build evidence. Orta and Ghoulies have Linux
+validation only; Android packages and device behaviour remain unvalidated.
+Each built APK is `dist/<title>-arm64-debug.apk`. Each Linux executable is under
 `ports/<title>/out/build/linux-release/`. The scripts prepare the appropriate
 shared SDK or title-specific overlay automatically.
 
@@ -78,7 +82,7 @@ the matching `assets` folder alongside the executable.
 
 Connect a physical controller. SDL maps the sticks, D-pad, face buttons, and
 triggers; R1 maps to Xbox Black, L1 to White, and Select to Back. There is no
-touch overlay for the seven retail Xbox ports. The three Chihiro ports have
+touch overlay for the retail Xbox ports. The three Chihiro ports have
 touch controls described in [ANDROID.md](ANDROID.md#chihiro-touch-controls).
 R3 opens settings and automatically pauses gameplay,
 game clocks and audio. R3 closes settings and resumes. F10 also works on Linux.
@@ -87,6 +91,28 @@ BLACK retains its custom panel and follows the same pause contract.
 The desktop runtime writes saves/cache to `hdd/`, logs to `logs/`, and settings
 beside the executable. Back up those folders before replacing or cleaning a
 build. Closing the application ends the native session.
+
+## Panzer Dragoon Orta and Grabbed by the Ghoulies
+
+Supply the matching USA executable and original extracted folders in
+`ports/PDOrta/assets` or `ports/Ghoulies/assets`, then build and launch:
+
+```sh
+python3 tools/build_linux.py PDOrta --jobs 4
+./ports/PDOrta/out/build/linux-release/PDOrta
+
+python3 tools/build_linux.py Ghoulies --jobs 4
+./ports/Ghoulies/out/build/linux-release/Ghoulies
+```
+
+Orta's first boot populates its Z: cache and can take about 44 seconds. Movies,
+menus and active Episode 1 movement/shooting are verified, including pause/resume.
+Later episodes, saves and the bonus `PD1.xbe` are unvalidated. Ghoulies renders the
+intro with the restored smoke effect and book covers; gameplay, menus and the CDX
+bonus-video player are unvalidated. Audio has not been checked against hardware
+for either title. Detailed evidence and matching executable hashes are in
+[Orta's status](../ports/PDOrta/PORT_STATUS.md) and
+[Ghoulies' status](../ports/Ghoulies/PORT_STATUS.md).
 
 ## Android build and install
 

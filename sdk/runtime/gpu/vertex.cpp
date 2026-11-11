@@ -6,6 +6,7 @@
 
 #include <dxgiformat.h>
 
+#include "core/diag.h"
 #include "core/log.h"
 #include "kernel/kernel.h"
 
@@ -451,7 +452,13 @@ bool Assemble(const State& s, uint32_t prim, uint32_t start, uint32_t count, con
     VertexShader fvf_layout;
     const VertexShader* layout = PickLayout(s, fvf_layout);
     out.pretransformed = Pretransformed(s);
-    if (!layout) return false;
+    if (!layout) {
+        // A draw with no layout is dropped, and the reason is worth saying.
+        static uint32_t line = 0;
+        if (diag::Perf() && line++ % 60 == 0)
+            LOGI("gpu: draw dropped, no vertex layout (vs_handle %08X, vs %s)", s.vs_handle, s.vs ? "set" : "null");
+        return false;
+    }
 
     // the vertex range the draw reads
     IndexBounds bounds = {0, count - 1};

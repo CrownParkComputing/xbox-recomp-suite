@@ -23,3 +23,11 @@ existing third-party notices are also in `sdk/THIRD_PARTY.txt`.
 
 Linux DXC is fetched separately from its pinned upstream distribution; retain
 its bundled notices with any local redistributable build.
+
+Panzer Dragoon Orta's bring-up included a reference comparison with
+[wootbeer/ortarecomp at 5f396c9](https://github.com/wootbeer/ortarecomp/tree/5f396c90ad7a59ac5a07204102bfbfab140d32f2),
+particularly CRI synchronization, guest scheduling and controller behaviour.
+The comparison and suite-specific changes are recorded in
+[Orta's port status](ports/PDOrta/PORT_STATUS.md). Both new ports use
+XbSymbolDatabase-derived API addresses plus hand-proven image layouts; no retail
+executables or middleware code are included.

@@ -107,6 +107,10 @@ void x86_resume(X86Context& ctx, uint8_t* base, const X86Resume& r) {
 }
 
 void x86_kernel(X86Context& ctx, uint8_t* base, uint32_t ordinal) {
+    // Elevated IRQL is itself a guest exclusion region. Ordinary kernel
+    // calls release the CPU for waits, I/O and callbacks, then reacquire it
+    // (and honour suspension) before returning to guest instructions.
+    kernel::GuestYield yield(!ctx.fs_base || kernel::G<uint8_t>(ctx.fs_base + 0x24) < 2);
     if (ordinal < 400 && g_exports[ordinal].fn) {
         g_exports[ordinal].fn(ctx, base);
         return;
@@ -141,6 +145,7 @@ const char* ExportName(uint32_t ordinal) { return ordinal < 400 && g_exports[ord
 bool HasExport(uint32_t ordinal) { return ordinal < 400 && (g_exports[ordinal].fn || g_exports[ordinal].data); }
 
 uint32_t CallGuest(X86Context& ctx, uint32_t fn, const uint32_t* args, size_t count) {
+    GuestExecution execution;
     // the D3D and DirectSound hooks call this several times a draw: no heap, only the registers put back are kept
     struct {
         uint32_t eax, ecx, edx, ebx, esi, edi, ebp;

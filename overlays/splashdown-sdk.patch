@@ -467,18 +467,20 @@
      return 0;
  }
  
-@@ -1094,6 +1157,7 @@
+@@ -1094,7 +1157,8 @@
      std::lock_guard<std::recursive_mutex> lock(g_lock);
+     LogDraw("SetVertexShader", a[0], 0, 0, 0);
      Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
      uint32_t h = a[0];
 +    g_direct_vs_active = false;
      g_state.vs_handle = h;
      g_state.vs = nullptr;
      StoreCurrentShader(h);
-@@ -1153,6 +1217,7 @@
+@@ -1153,7 +1217,8 @@
      std::lock_guard<std::recursive_mutex> lock(g_lock);
      Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
      const uint32_t handle = a[0];
+     LogDraw("SelectVertexShader", handle, 0, 0, a[1]);
 +    g_direct_vs_active = false;
      if (!handle) {
          g_state.vs_handle = 0;
@@ -573,32 +575,10 @@
          return;
      }
      if (ImmediateAttribute(m, v)) return;
-@@ -1530,6 +1633,45 @@
+@@ -1530,6 +1633,23 @@
      return 0;
  }
  
-+#if HAS_D3DDevice_DrawIndexedVerticesUP
-+HLE_STDCALL(D3DDevice_DrawIndexedVerticesUP, 5) {
-+    std::lock_guard<std::recursive_mutex> lock(g_lock);
-+    Walk(Dev(kDevPush));
-+    const uint32_t count = a[1], indices = a[2], vertices = a[3], stride = a[4];
-+    if (!count) return 0;
-+    if (!indices || !vertices || !stride || uint64_t(count) * stride > kUpHalf) return 0x8876086C;
-+    // Expand in index order into the same transient stream as DrawVerticesUP. This
-+    // preserves strips/fans/quads and snapshots caller-owned vertices before returning.
-+    // The guest copy routine depends on private XDK vertex-packing tables, which
-+    // are bypassed when the host binds its own declarations and programs.
-+    static std::vector<uint8_t> packed;
-+    packed.resize(size_t(count) * stride);
-+    for (uint32_t i = 0; i < count; ++i) {
-+        const uint32_t index = G<uint16_t>(indices + i * 2);
-+        std::memcpy(packed.data() + size_t(i) * stride, HostPtr(vertices + index * stride), stride);
-+    }
-+    DrawUp(a[0], count, packed.data(), stride);
-+    return 0;
-+}
-+#endif
-+
 +#if HAS_D3DDevice_RunPushBuffer
 +HLE_STDCALL(D3DDevice_RunPushBuffer, 2) {
 +    std::lock_guard<std::recursive_mutex> lock(g_lock);

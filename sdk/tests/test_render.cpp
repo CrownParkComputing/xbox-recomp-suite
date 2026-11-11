@@ -298,6 +298,43 @@ TEST("render: a textured strip samples a linear texture as the reference does") 
     CHECK_MSG(d.count < kEdgeSlack, d.first);
 }
 
+TEST("render: thin block-compressed textures keep their logical sampling extent") {
+    REQUIRE(Vulkan());
+    GuestBuffer vb({0, 0, 0.5f, 1, 0, 0, 64, 0, 0.5f, 1, 1, 0,
+                    0, 64, 0.5f, 1, 0, 1, 64, 64, 0.5f, 1, 1, 1});
+    for (auto [w, h] : {std::pair{16u, 1u}, {16u, 2u}, {1u, 16u}, {2u, 16u}}) {
+        GuestSurface tex(kFmtLinArgb, w, h, true);
+        const uint32_t logw = w == 16 ? 4 : w == 2 ? 1 : 0;
+        const uint32_t logh = h == 16 ? 4 : h == 2 ? 1 : 0;
+        kernel::W32(tex.header + 12, 0x00010C21 | logw << 20 | logh << 24);  // DXT1, one mip
+        kernel::W32(tex.header + 16, 0);
+        // Valid texels are red; the rest of each 4x4 block is green. Expanding
+        // the image extent to whole blocks incorrectly exposes those texels.
+        const uint32_t bw = (w + 3) / 4, bh = (h + 3) / 4;
+        for (uint32_t by = 0; by < bh; ++by)
+            for (uint32_t bx = 0; bx < bw; ++bx) {
+                uint32_t selectors = 0;
+                for (uint32_t y = 0; y < 4; ++y)
+                    for (uint32_t x = 0; x < 4; ++x)
+                        if (bx * 4 + x >= w || by * 4 + y >= h) selectors |= 1u << (2 * (y * 4 + x));
+                const uint32_t block = tex.data + (by * bw + bx) * 8;
+                kernel::W32(block, 0x07E0F800);  // red and green RGB565 endpoints
+                kernel::W32(block + 4, selectors);
+            }
+        const std::string name = "DXT1 " + std::to_string(w) + "x" + std::to_string(h);
+        Diff d = Run(name.c_str(), 0, [&](State& s, Backend* b) {
+            s.vs_handle = kFvfXyzRhw | kFvfTex1;
+            s.streams[0] = {vb.header, 24};
+            s.textures[0] = tex.header;
+            s.tss[0][kTssColorArg1] = kTaTexture;
+            s.tss[0][kTssAlphaArg1] = kTaTexture;
+            Clear(s, b, kClearTarget, 0);
+            Draw(s, b, kTriangleStrip, 4);
+        });
+        CHECK_MSG(d.count < kEdgeSlack, d.first);
+    }
+}
+
 TEST("render: the depth test keeps the nearer of two overlapping triangles in either order") {
     REQUIRE(Vulkan());
     GuestBuffer near_tri(RhwDiffuse({{{4, 4, 0.2f, 1}}, {{60, 4, 0.2f, 1}}, {{32, 60, 0.2f, 1}}},

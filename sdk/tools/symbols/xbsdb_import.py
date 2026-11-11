@@ -53,6 +53,10 @@ def runtime_names(sdk):
     names = set()
     for path in glob.glob(os.path.join(sdk, "runtime", "xdk", "*.cpp")):
         for line in lines(path):
+            wrapped = re.match(r"\s*(BUFFER|STREAM)\((\w+),", line)
+            if wrapped:
+                prefix = "IDirectSoundBuffer_" if wrapped.group(1) == "BUFFER" else "CDirectSoundStream_"
+                names.add(prefix + wrapped.group(2))
             m = re.match(r"\s*HLE_(?:STDCALL|FASTCALL|CDECL|WRAP)\((\w+)", line)
             if m:
                 names.add(m.group(1))

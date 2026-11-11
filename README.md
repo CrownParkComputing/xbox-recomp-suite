@@ -1,6 +1,6 @@
 # Xbox Recomp Suite
 
-Source snapshots for ten original Xbox/Chihiro native ports, their Linux/Vulkan and
+Source snapshots for twelve original Xbox/Chihiro native ports, their Linux/Vulkan and
 Android tooling, the shared Xbox XBE Recomp runtime, and the porting cookbook.
 SDL and the other source dependencies are vendored with their upstream licenses
 and exact revisions in [`DEPENDENCIES.lock.json`](DEPENDENCIES.lock.json).
@@ -10,7 +10,7 @@ APKs, or signing keys are included.** Supply your own matching game files to
 build a port. This repository records experimental conversions; booting an intro
 is not evidence of complete gameplay support.
 
-| Port | Android evidence at this snapshot | Main limitation |
+| Port | Verified status | Main limitation |
 | --- | --- | --- |
 | Splashdown | SD ISO boot and native race; menu and spray fixes installed | Spray comparison and Career handheld confirmation pending; native Career race has AI opponents; DSP/reverb incomplete |
 | Burnout 3 | SD folder boot; loading completes and EA intro plays | Full gameplay/performance not revalidated here |
@@ -22,18 +22,20 @@ is not evidence of complete gameplay support.
 | Virtua Cop 3 (MYSTRO) | ARM64 APK builds; mouse/touch input tests pass | Android device boot/gameplay unverified; Linux gameplay and stage previews verified |
 | The House of the Dead III | ARM64 APK builds; mouse/touch input tests pass | Android device boot/gameplay unverified; Linux first-stage mouse gun verified |
 | OutRun 2 (Chihiro 2.000) | ARM64 APK builds with touch driving controls | Android device boot/gameplay unverified; Linux first-course driving verified |
+| [Panzer Dragoon Orta](ports/PDOrta/PORT_STATUS.md) | Linux movies, menus and active Episode 1 flight/combat, including pause/resume | Later episodes, saves, audio fidelity and Android unvalidated; bonus PD1 image not recompiled |
+| [Grabbed by the Ghoulies](ports/Ghoulies/PORT_STATUS.md) | Linux intro with animated smoke, coloured book covers and offscreen rendering | Gameplay, menus, saves, audio and Android unvalidated; bonus CDX player not recompiled |
 
 The shared Android launcher remembers the selected SD ISO/folder, skips the
 picker while it remains accessible, and ends the native game process on
 minimize/close. SD boot, remembered selection and fresh-process restart were
-device-tested across all seven titles. L.A. Rush's former local
+device-tested across the original seven retail Xbox titles. L.A. Rush's former local
 folder name, SFRush-XBERecomp, was misleading: its game is L.A. Rush.
 
 ## Layout
 
 - `sdk/`: the shared runtime, recompiler, XDK layouts, tests, and templates.
 - `ports/<title>/`: per-game configuration, native hooks, and original notes.
-- `overlays/`: isolated SDK changes for Splashdown and L.A. Rush.
+- `overlays/`: isolated SDK changes for Splashdown, L.A. Rush/Ghoulies and Chihiro.
 - `android/`: shared SDL Java, launcher, document-tree JNI, shader adapter, and APK packaging.
 - `third_party/`: pinned SDL, glslang, SPIRV-Tools/Headers, ImGui, toml++, VMA, Zydis and Zycore sources.
 - `tools/`: portable SDK preparation, Linux/Android builds, and source audit.
@@ -73,8 +75,9 @@ device. The three Chihiro ports also provide touch controls. The launcher
 remembers that location. See the table above for each
 port's validation limits.
 
-Replace `LARush` with `Splashdown`, `Burnout3`, `Links2004`, `NFSHP2`, `PGR1`, or
-`BLACK`, `VCop3`, `HOTD3`, or `OutRun2` to build another title.
+Replace `LARush` with `Splashdown`, `Burnout3`, `Links2004`, `NFSHP2`, `PGR1`,
+`BLACK`, `VCop3`, `HOTD3`, `OutRun2`, `PDOrta`, or `Ghoulies` to build another title.
+Panzer Dragoon Orta and Ghoulies currently have Linux validation only.
 [The run guide](docs/RUNNING.md) lists executable
 names, Android packages, ISO extraction, saves, and troubleshooting.
 

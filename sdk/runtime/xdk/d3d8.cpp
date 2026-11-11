@@ -46,6 +46,10 @@ using namespace kernel;
 #define SYM_D3DDevice_Present FFFFFE04
 #define HAS_D3DDevice_Present 0
 #endif
+#ifndef SYM_D3DDevice_DrawIndexedVerticesUP
+#define SYM_D3DDevice_DrawIndexedVerticesUP FFFFFE05
+#define HAS_D3DDevice_DrawIndexedVerticesUP 0
+#endif
 #ifndef XDK_CDevice_EmbeddedBuffers
 #define XDK_CDevice_EmbeddedBuffers 0
 #endif
@@ -82,6 +86,22 @@ constexpr uint32_t kDevPush = XDK_CDevice_Push, kDevThreshold = XDK_CDevice_Push
 constexpr uint32_t kStageStates = XDK_TextureState_Stage, kStreamSize = XDK_Stream_Size;
 
 gpu::State g_state;
+
+// The draw's arguments, for the diagnostics: a title that asks for no
+// vertices, or points at a stream that holds none, is the difference
+// between a black screen and a picture. One line a second is enough to see
+// what the title asked for.
+namespace {
+void LogDraw(const char *what, uint32_t prim, uint32_t start, uint32_t count, uint32_t extra) {
+    static uint32_t line = 0;
+    if (!diag::Perf()) return;
+    if (line++ % 60 != 0) return;
+    LOGI("d3d: %s prim=%u start=%u count=%u extra=%08X streams:", what, prim, start, count, extra);
+    for (uint32_t s = 0; s < 4; s++)
+        LOGI("d3d:   stream %u vb=%08X stride=%u", s, g_state.streams[s].vb, g_state.streams[s].stride);
+}
+}
+
 std::unique_ptr<gpu::Backend> g_backend;
 std::recursive_mutex g_lock;
 
@@ -398,8 +418,11 @@ HLE_STDCALL(Direct3D_CreateDevice, 6) {
     XDK_REQUIRE("d3d", XDK_DATA(D3D_Device), XDK_DATA(D3D_pDevice), XDK_DATA(D3D_DirtyFlags),
                 XDK_DATA(D3D_DeferredTextureState), XDK_DATA(D3D_RenderState), XDK_DATA(D3D_Streams),
                 XDK_DATA(D3D_SimpleRenderStateEncode));
+    // CDevice_IndexBuffer is required by D3DDevice_SetIndices instead: a title that never calls it
+    // (Grabbed by the Ghoulies, whose image has no SetIndices at all) has no field to prove, and
+    // demanding it here would refuse to create the device over a key nothing reads.
     XDK_REQUIRE("d3d", XDK_KEY(CDevice_Push), XDK_KEY(CDevice_PushThreshold), XDK_KEY(CDevice_BaseVertex),
-                XDK_KEY(CDevice_IndexBuffer), XDK_KEY(CDevice_ZScale), XDK_KEY(CDevice_SuperSampleX),
+                XDK_KEY(CDevice_ZScale), XDK_KEY(CDevice_SuperSampleX),
                 XDK_KEY(CDevice_SuperSampleY), XDK_KEY(CDevice_Transforms), XDK_KEY(CDevice_Textures),
                 XDK_KEY(CDevice_RenderTarget), XDK_KEY(CDevice_Depth), XDK_KEY(CDevice_BackBuffer),
                 XDK_KEY(CDevice_FrontBuffer), XDK_KEY(CDevice_SwapCount), XDK_KEY(CDevice_Size),
@@ -587,6 +610,7 @@ HLE_STDCALL(D3D_MakeRequestedSpace, 2) {
 }
 
 HLE_STDCALL(D3DDevice_BlockUntilVerticalBlank, 0) {
+    GuestYield yield;
     if constexpr (kVBlank) {
         // Wait for the next actual tick and its callback. A fixed 16 ms sleep
         // drifts against the 60 Hz clock that titles use to pace their frames.
@@ -997,7 +1021,7 @@ HLE_STDCALL(D3DDevice_SetStreamSource, 3) {
 HLE_STDCALL(D3DDevice_SetIndices, 2) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
-    XDK_REQUIRE("d3d", XDK_DATA(D3D_IndexData));
+    XDK_REQUIRE("d3d", XDK_DATA(D3D_IndexData), XDK_KEY(CDevice_IndexBuffer));
     uint32_t ib = a[0];
     uint32_t old = Dev(kDevIndexBuffer);
     AddRef(ctx, ib);
@@ -1092,6 +1116,7 @@ HLE_STDCALL(D3DDevice_LoadVertexShaderProgram, 2) {
 
 HLE_STDCALL(D3DDevice_SetVertexShader, 1) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
+    LogDraw("SetVertexShader", a[0], 0, 0, 0);
     Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
     uint32_t h = a[0];
     g_state.vs_handle = h;
@@ -1153,6 +1178,7 @@ HLE_STDCALL(D3DDevice_SelectVertexShader, 2) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     Walk(Dev(kDevPush));  // consume earlier guest commands before changing their state
     const uint32_t handle = a[0];
+    LogDraw("SelectVertexShader", handle, 0, 0, a[1]);
     if (!handle) {
         g_state.vs_handle = 0;
         g_state.vs.reset();
@@ -1292,6 +1318,7 @@ HLE_STDCALL(D3DDevice_SetPixelShaderConstant, 3) {
 
 HLE_STDCALL(D3DDevice_DrawVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
+    LogDraw("DrawVertices", a[0], a[1], a[2], 0);
     Walk(Dev(kDevPush));  // a visibility test begun since the last draw counts this one
     SyncDeferred();
     if (g_backend) g_backend->Draw(g_state, a[0], a[1], a[2], nullptr);
@@ -1300,6 +1327,7 @@ HLE_STDCALL(D3DDevice_DrawVertices, 3) {
 
 HLE_STDCALL(D3DDevice_DrawIndexedVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
+    LogDraw("DrawIndexedVertices", a[0], 0, a[1], a[2]);
     Walk(Dev(kDevPush));
     SyncDeferred();
     const uint8_t* indices = a[2] ? static_cast<const uint8_t*>(HostPtr(a[2])) : nullptr;
@@ -1335,13 +1363,39 @@ uint32_t UpVertices(const void* src, uint32_t bytes) {
     return g_up_header;
 }
 
-void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride) {
+void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride, const uint8_t* indices = nullptr) {
     if (!g_backend || !count || !stride) return;
+    // Where the quad actually is: a title that draws off screen shows nothing
+    // at all, and the vertex data is the only place that says so.
+    if (diag::Perf()) {
+        static uint32_t line = 0;
+        if (line++ % 60 == 0) {
+            const auto* v = static_cast<const float*>(vertices);
+            LOGI("d3d: DrawVerticesUP prim=%u count=%u stride=%u fvf=%08X first vertex %f %f %f %f", prim, count, stride,
+                 g_state.vs_handle, v[0], v[1], v[2], v[3]);
+        }
+    }
     SyncDeferred();
+    uint32_t vertices_read = count;
+    if (indices) {
+        vertices_read = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            uint16_t index;
+            std::memcpy(&index, indices + i * 2, sizeof index);
+            vertices_read = std::max(vertices_read, uint32_t(index) + 1);
+        }
+        if (uint64_t(vertices_read) * stride > kUpHalf) {
+            LOGW("d3d: indexed UP vertex data exceeds the upload ring half");
+            return;
+        }
+    }
     auto stream = g_state.streams[0];
-    g_state.streams[0] = {UpVertices(vertices, count * stride), stride};
-    g_backend->Draw(g_state, prim, 0, count, nullptr);
+    const uint32_t base_vertex = g_state.base_vertex;
+    if (indices) g_state.base_vertex = 0;  // UP indices address the caller's own stream
+    g_state.streams[0] = {UpVertices(vertices, vertices_read * stride), stride};
+    g_backend->Draw(g_state, prim, 0, count, indices);
     g_state.streams[0] = stream;
+    g_state.base_vertex = base_vertex;
 }
 
 // bytes per vertex of the bound format: stream 0 of the FVF or of the shader's declaration
@@ -1455,6 +1509,7 @@ void EndCommandPrimitive() {
         return;
     }
     uint32_t stride = VertexBytes(), bytes = uint32_t(g_inline.size()) * 4;
+    LOG_FIRST(6, "d3d: TEMP inline prim %u bytes %u stride %u", g_im_prim, bytes, stride);
     if (stride && bytes % stride == 0) DrawUp(g_im_prim, bytes / stride, g_inline.data(), stride);
     else LOG_FIRST(8, "d3d: inline primitive %u dropped, %u bytes of vertices of %u", g_im_prim, bytes, stride);
     g_im_prim = 0;
@@ -1525,8 +1580,17 @@ void Walk(uint32_t end) {
 
 HLE_STDCALL(D3DDevice_DrawVerticesUP, 4) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
+    LogDraw("DrawVerticesUP", a[0], 0, a[1], a[2]);
     Walk(Dev(kDevPush));
     DrawUp(a[0], a[1], HostPtr(a[2]), a[3]);
+    return 0;
+}
+
+HLE_STDCALL(D3DDevice_DrawIndexedVerticesUP, 5) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    Walk(Dev(kDevPush));
+    if (a[2] && a[3])
+        DrawUp(a[0], a[1], HostPtr(a[3]), a[4], static_cast<const uint8_t*>(HostPtr(a[2])));
     return 0;
 }
 
@@ -1540,6 +1604,10 @@ HLE_STDCALL(D3DDevice_BeginPush, 1) {
 
 HLE_STDCALL(D3DDevice_EndPush, 1) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
+    // A port with no BeginPush (Grabbed by the Ghoulies) leaves g_push_begin at 0; reading the
+    // scratch head then faults. Only the ports that actually opened a push have a head to log.
+    if (g_push_begin)
+        LOG_FIRST(6, "d3d: TEMP EndPush begin %08X end %08X (%u bytes) head %08X %08X %08X", g_push_begin, a[0], a[0] - g_push_begin, R32(g_push_begin), R32(g_push_begin + 4), R32(g_push_begin + 8));
     if (g_push_begin) Execute(g_push_begin, a[0], true);
     g_push_begin = 0;
     ScratchPush();

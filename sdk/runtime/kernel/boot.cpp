@@ -1,7 +1,9 @@
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
 #include <fstream>
+#include <thread>
 
 #include "app/app.h"
 #include "kernel/kernel.h"
@@ -83,6 +85,22 @@ void SetSavedDataAddress(uint32_t surface) { g_saved_data = surface; }
 const xbe::Image* g_image = nullptr;
 static xbe::Image g_xbe;
 
+// The APU's free-running sample counter at 0xFE80200C. A title's audio engine can read that register
+// directly instead of asking DSOUND for the time: Grabbed by the Ghoulies' XACT clock does at 0x1BD517,
+// and converts the value with 48000 samples and 10000 units of 100 ns. Nothing else of the APU register
+// block is modelled - the page is committed so the read cannot fault, and a host thread keeps the
+// counter moving on the pause-aware game clock, so a paused title sees no elapsed samples.
+void StartApuClock() {
+    constexpr uint32_t kApuSampleCount = 0xFE80200C;
+    if (!mem::Commit(kApuSampleCount & ~(mem::kPage - 1), mem::kPage)) return;
+    std::thread([] {
+        for (;;) {
+            W32(kApuSampleCount, uint32_t(host::GameNs() * 48000 / 1000000000));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }).detach();
+}
+
 bool Boot(std::vector<uint8_t> xbe, const std::string& xbe_name, const std::string& game_dir, const std::string& data_dir) {
     if (!mem::Init()) return false;
     g_base = mem::Base();
@@ -115,6 +133,7 @@ bool Boot(std::vector<uint8_t> xbe, const std::string& xbe_name, const std::stri
     if (app::kGame.loaded) app::kGame.loaded();
 
     InitKernelData();
+    StartApuClock();
     dispatch::Init();
 
     uint32_t missing = 0;

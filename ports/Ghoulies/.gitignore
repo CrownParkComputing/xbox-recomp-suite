@@ -1,0 +1,33 @@
+# build
+/out/
+/build/
+/build-native/
+/android/build/
+/android/app/src/main/jniLibs/
+/sdk
+__pycache__/
+*.zip
+*.pdb
+*.exe
+*.obj
+*.o
+
+# recompiled code, derived from the game
+/generated/
+
+# user's own game files
+/assets/
+
+# runtime files
+settings.toml
+/logs/
+/hdd/
+/CrashDumps/
+
+# editors
+.vs/
+.vscode/
+.idea/
+
+# Local temporary folder
+.local

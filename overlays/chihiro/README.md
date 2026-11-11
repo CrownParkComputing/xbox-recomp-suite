@@ -8,9 +8,11 @@ commit `9f957d6584a3e8f81d7410bcbd79ed342e52cc51` for the standalone native port
 - `chihiro-memory.patch`: 128 MiB physical memory.
 - `flush-guest-push.patch`: deliver completed visibility reports before Present.
 - `buffer-envelope.patch`: pitch conversion and an explicit unsupported envelope result.
-- `indexed-up.patch`: indexed draws from user memory.
 - `controller-capabilities.patch`: packed XInput capability reports.
 - `target-alpha.patch`: sample XRGB render targets with opaque alpha.
+
+Indexed draws from user memory now use the shared SDK implementation; the
+former `indexed-up.patch` has been retired.
 
 Existing per-title XDK layout evidence and cabinet hooks remain in the ports.
 The renderer patches include focused test changes; runtime pause/clock behavior

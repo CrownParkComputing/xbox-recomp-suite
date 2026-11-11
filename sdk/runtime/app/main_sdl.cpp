@@ -48,7 +48,10 @@ void OnCrash(int sig) {
 
 int main(int argc, char** argv) {
     app::SetArguments(argc, argv);
-    for (int sig : {SIGABRT, SIGFPE, SIGILL, SIGBUS}) std::signal(sig, OnCrash);
+    // SIGSEGV too: a guest that walks off its address space is the common bring-up crash, and without
+    // this it dies with no guest stack at all. OnCrash re-raises with the default handler, so the core
+    // dump is unchanged.
+    for (int sig : {SIGABRT, SIGFPE, SIGILL, SIGBUS, SIGSEGV}) std::signal(sig, OnCrash);
     std::vector<std::string> args(argv, argv + argc);
     bool relaunched = std::find(args.begin(), args.end(), "--relaunched") != args.end();
     std::string log = app::kGame.log;

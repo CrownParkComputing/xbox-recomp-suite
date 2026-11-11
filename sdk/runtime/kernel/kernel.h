@@ -56,6 +56,25 @@ enum : uint32_t {
 
 extern uint8_t* g_base;
 
+// Enable before boot for titles whose guest code assumes one processor.
+void SerializeGuestCpu();
+bool GuestCpuEnter();
+bool GuestCpuLeave();
+class GuestExecution {
+    bool acquired_ = GuestCpuEnter();
+public:
+    ~GuestExecution() { if (acquired_) GuestCpuLeave(); }
+    GuestExecution() = default;
+    GuestExecution(const GuestExecution&) = delete;
+};
+class GuestYield {
+    bool held_;
+public:
+    explicit GuestYield(bool yield = true) : held_(yield && GuestCpuLeave()) {}
+    ~GuestYield() { if (held_) GuestCpuEnter(); }
+    GuestYield(const GuestYield&) = delete;
+};
+
 template <typename T>
 inline T& G(uint32_t va) {
     return *reinterpret_cast<T*>(g_base + va);

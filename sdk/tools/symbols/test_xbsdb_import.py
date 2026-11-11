@@ -53,14 +53,14 @@ D3D_pDevice = 0
 
 
 class Import(unittest.TestCase):
-    def run_import(self):
+    def run_import(self, runtime=RUNTIME, found=FOUND, config=CONFIG):
         with tempfile.TemporaryDirectory() as d:
             sdk = os.path.join(d, "sdk")
             paths = {"found.txt": os.path.join(d, "found.txt"), "game.toml": os.path.join(d, "game.toml"),
                      "signatures.toml": os.path.join(sdk, "xdk", "5849", "signatures.toml"),
                      "d3d8.cpp": os.path.join(sdk, "runtime", "xdk", "d3d8.cpp")}
-            for n, text in (("found.txt", FOUND), ("signatures.toml", SIGNATURES), ("game.toml", CONFIG),
-                            ("d3d8.cpp", RUNTIME)):
+            for n, text in (("found.txt", found), ("signatures.toml", SIGNATURES), ("game.toml", config),
+                            ("d3d8.cpp", runtime)):
                 os.makedirs(os.path.dirname(paths[n]), exist_ok=True)
                 with open(paths[n], "w") as f:
                     f.write(text)
@@ -77,6 +77,16 @@ class Import(unittest.TestCase):
     def test_a_function_only_the_runtime_replaces_is_found_too(self):
         _, config = self.run_import()
         self.assertIn("D3DDevice_SetBackBufferScale = 0x167830", config)
+
+    def test_audio_wrappers_are_imported_and_keep_hand_proven_addresses(self):
+        _, config = self.run_import(
+            runtime=RUNTIME + "BUFFER(AddRef, 1) {}\nBUFFER(Pause, 2) {}\nSTREAM(GetStatus, 2) {}\n",
+            found=FOUND + "DSOUND__IDirectSoundBuffer_AddRef = 0x002C12AE\n"
+                          "DSOUND__CDirectSoundStream_GetStatus = 0x002C1EB7\n",
+            config=CONFIG.replace("[symbols]\n", "[symbols]\nIDirectSoundBuffer_Pause = 0x2C25BE # proven thunk\n"))
+        self.assertRegex(config, r"IDirectSoundBuffer_AddRef += 0x2C12AE")
+        self.assertRegex(config, r"CDirectSoundStream_GetStatus += 0x2C1EB7")
+        self.assertIn("IDirectSoundBuffer_Pause = 0x2C25BE # proven thunk", config)
 
     def test_a_name_printed_twice_keeps_the_first(self):
         _, config = self.run_import()
